@@ -18,10 +18,7 @@ class ChangePasswordConvo {
 
     async initialMessage(telegramID) {
         let result = await new ActionHandler().request2FA(telegramID)
-        console.log("RESULT:")
-        console.log(result)
         if (result) {
-            console.log("it should send a message")
             return `I see you'd like to change your password. Please send the code you just received, your ` +
                 `current password, and your new password, each separated by a space, or click "Cancel". \n` +
                 `Example: 1111 yourpassword yournewpassword`
