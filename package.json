@@ -1,7 +1,7 @@
 {
   "name": "liteIM-telegram",
   "version": "1.0.0",
-  "main": "serverless_handler.js",
+  "main": "utils/serverless_handler.js",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/zulurepublic/liteIM-telegram.git"
