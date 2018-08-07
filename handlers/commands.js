@@ -189,7 +189,7 @@ module.exports = async webhookData => {
         await new ConvoHandler(telegramID)
             .createNewCommandPartial(parsedMessage.command)
             .then(async () => {
-                content = new ChangePasswordConvo().initialMessage(telegramID)
+                content = await new ChangePasswordConvo().initialMessage(telegramID)
                 keyboard = [
                     {
                         text: 'Cancel',
