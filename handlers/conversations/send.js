@@ -149,8 +149,8 @@ class SendConvo {
                     ]
                 }
             case steps[2]:
-                let amount
-                if (value === 'all') {
+                let amount = value
+                if (amount === 'all') {
                     let getBalance = await new ActionHandler().balance(this.commandConvo.data().telegramID)
                     if (getBalance && getBalance.balance) {
                         let balance = Number(getBalance.balance)
@@ -166,25 +166,33 @@ class SendConvo {
                             this.commandConvo.id,
                             params
                         )
+
+                        if (this.commandConvo.data().currency === '$') {
+                            try {
+                                let rate = await require('../../utils/getPrice')()
+                                amount = (amount * rate).toFixed(2)
+                            } catch (err) {
+                                throw err
+                            }
+                        }
                     }
                     else return { message: 'I was unable to fetch your balance. Click "Cancel" to start over.',
                         keyboard: [[{ text: 'Cancel', callback_data: '/clear' }]] }
-                } else {
-                    amount = value
-                    if (this.commandConvo.data().currency === '$') {
-                        if (amount.charAt(0) === '$') amount = amount.substr(1)
-                        try {
-                            let rate = await require('../../utils/getPrice')()
-                            amount = (amount / rate).toFixed(4)
-                            let params = {}
-                            params['amount'] = amount
-                            await this.firestore.setCommandPartial(
-                                this.commandConvo.id,
-                                params
-                            )
-                        } catch (err) {
-                            throw err
-                        }
+                }
+
+                if (this.commandConvo.data().currency === '$') {
+                    if (typeof amount === 'string' && amount.charAt(0) === '$') amount = amount.substr(1)
+                    try {
+                        let rate = await require('../../utils/getPrice')()
+                        let amountLTC = (amount / rate).toFixed(4)
+                        let params = {}
+                        params['amount'] = amountLTC
+                        await this.firestore.setCommandPartial(
+                            this.commandConvo.id,
+                            params
+                        )
+                    } catch (err) {
+                        throw err
                     }
                 }
 
@@ -193,9 +201,9 @@ class SendConvo {
                 )
                 if (result) {
                     return (
-                        `If you want to send Ł${amount} to ${
+                        `If you want to send ${this.commandConvo.data().currency}${amount} to ${
                             this.commandConvo.data().to
-                        } reply with the 2FA code` +
+                        } reply with the 2FA code ` +
                         `you just received along with your password, separated by a space, or click "Cancel". \n` +
                         `Example: 1111 yourpassword`
                     )
