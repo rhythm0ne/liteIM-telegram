@@ -435,7 +435,7 @@ const doConversation = async webhookData => {
                 })
                 .catch(async failure => {
                     content = failure
-                    keyboard = [[{ text: 'Main Menu', callback_data: '/help' }]]
+                    keyboard = [[{ text: 'Cancel', callback_data: '/help' }]]
                     if (failure.message) {
                         content = failure.message
                         keyboard = failure.keyboard
@@ -464,8 +464,13 @@ const doConversation = async webhookData => {
 
 const unknownMessage = async messenger => {
     await messenger.editMessage(
-        "Sorry I didn't quite get that. What did you want to do?",
-        messenger.inlineKeyboard('p1')
+        "Sorry I didn't quite get that. Please cancel and try again.",
+        messenger.inlineKeyboard([
+            {
+                text: 'Cancel',
+                callback_data: '/help'
+            }
+        ])
     )
     return true
 }
