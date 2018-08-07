@@ -29,8 +29,8 @@ class SignupConvo {
         let params = value.split(/\s+/)
         params = params.filter(param => param.length > 0)
         if (params.length < 2)
-            return { message: `Please enter the code you received at ${value} followed by your password, separated ` +
-                `by a space. \nExample: 1111 yourpassword`,
+            return { message: `Please enter the code you received to the number you provided, followed by your ` +
+                `password, separated by a space. \nExample: 1111 yourpassword`,
                 keyboard: [{ text: 'Change Phone Number', callback_data: '/enable2fa' }] }
 
         let code = params[0]
@@ -73,8 +73,8 @@ class SignupConvo {
 
                 if (result) {
                     return {
-                        message: `Please enter the code you received at ${value} followed by your password, ` +
-                        `separated by a space. \nExample: 1111 yourpassword`,
+                        message: `Please enter the code you received at the phone number you provided followed by ` +
+                        `your password, separated by a space. \nExample: 1111 yourpassword`,
                         keyboard: [[{text: 'Change Phone Number', callback_data: '/changeNumber'}]]
                     }
                 }
