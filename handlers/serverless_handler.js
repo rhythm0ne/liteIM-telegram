@@ -1,6 +1,10 @@
 const commandResponder = require('./commands')
 
 module.exports.webhook = async (event, context, callback) => {
+    let webhookData = JSON.parse(event.body)
+    let commandResult = await commandResponder(webhookData)
+    let success = !!commandResult
+
     let response = {
         statusCode: 200,
         headers: {
@@ -8,15 +12,6 @@ module.exports.webhook = async (event, context, callback) => {
             'Content-Type': 'application/json'
         }
     }
-
-    if (event.ping) {
-        response.body = {"success": true}
-        context.succeed(response)
-    }
-
-    let webhookData = JSON.parse(event.body)
-    let commandResult = await commandResponder(webhookData)
-    let success = !!commandResult
 
     response.body = JSON.stringify({ success })
     context.succeed(response)
