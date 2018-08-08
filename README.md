@@ -1,16 +1,16 @@
-##1. What is Lite.IM?
+## 1. What is Lite.IM?
 
 Lite.IM is a full-featured conversational Litecoin wallet designed to function entirely on Telegram. Users can signup and create their wallet, send and receive Litecoin, and check their balance and transaction history, all with a simple set of commands.
 
 Lite.IM is a project from the [Zulu Republic](https://www.zulurepublic.io/) team. 
 
-##2. Why Telegram?
+## 2. Why Telegram?
 
 Not only is Telegram widely used and accepted within the cryptocurrency community, it also gives us a perfect beta environment for testing this technology and for proof of concept before deployment on other platforms. As the most trusted messaging platform within the cryptocurrency community, it allows users to transact with Litecoin right from within an environment that they are already engaged with on a daily basis. 
 
 Best of all, Telegram is the most secure messaging service in the world, which means privacy is built in by default. When combined with the Litecoin blockchain, this makes for an incredibly powerful payments platform. 
 
-##3. Technology
+## 3. Technology
 
 **Architecture**
 
@@ -20,7 +20,7 @@ Lite.IM is lightweight, yet robust. With its serverless infrastructure, Lite.IM 
 
 Security is at the forefront of our services. Users' private keys are RSA encrypted using the user's password. Only the encrypted value is stored, which can only be decrypted using the user's password. We do not store passwords of any sort, authentication tokens of any sort, nor do we ever store an unencrypted version of a user's sensitive data.
 
-##4. How does it work?
+## 4. How does it work?
 
 **Telegram Bot**
 
@@ -34,21 +34,21 @@ The receive command allows users to reveal their wallet address and/or the email
 
 Additional functionality will be added with future updates. 
 
-##5. Licensing 
+## 5. Licensing 
 
 Lite.IM is licensed under the [Creative Commons Attribution ShareAlike](https://creativecommons.org/licenses/by-sa/4.0/) (CC-BY-SA-4.0) license. This means you are free to share or adapt it in any way.
 
-##6. Contribute
+## 6. Contribute
 
 Please submit pull requests for big fixes and improvements. If you have any questions, please feel free to contact us on any of our community channels. Please make sure your code is working before submitting a pull request.
 
-##7. Bug Reporting
+## 7. Bug Reporting
 
 Bug reports can be sent to support@zulurepublic.io or submitted via chat at the [Zulu Republic Support Page](http://support.zulurepublic.io/).
 
 You can also reach the dev team directly on [github](https://github.com/zulurepublic/liteIM-telegram/issues).
 
-##8. Learn More
+## 8. Learn More
 
 To learn more about Lite.IM, visit the [project website](https://www.lite.im/), as well as the [Zulu Republic website](https://www.zulurepublic.io/) and [blog](www.medium.com/zulurepublic).
 
