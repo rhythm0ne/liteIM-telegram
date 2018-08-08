@@ -249,6 +249,19 @@ class FirestoreHandler {
             .set({ nextTransactionID: nextID }, { merge: true })
     }
 
+    async checkIfPhoneNumberExists(number) {
+        return await this.collection('two_factor')
+            .where('phoneNumber', '==', number)
+            .limit(1)
+            .get()
+            .then(snapshot => {
+                return snapshot && snapshot.exists
+            })
+            .catch(err => {
+                throw err
+            })
+    }
+
     async setBotCallbackID(telegramID, callbackID) {
         return await this.collection('telegramUsers')
             .where('telegramID', '==', telegramID)

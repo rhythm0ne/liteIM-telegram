@@ -49,18 +49,27 @@ class SignupConvo {
                     keyboard: [{ text: 'Change Phone Number', callback_data: '/enable2fa' }] }
             }
         } catch (e) {
-            return e.toString()
+            console.log(e)
+            return {
+                message: 'Something went wrong, please try again.',
+                keyboard: [[ {text: 'Try Again', callback_data: '/enable2fa' }]]
+            }
         }
     }
 
     async afterMessageForStep(step, value) {
         switch (step) {
             case steps[0]:
+                const ConvoHandler = require('../convo_handler')
+
+                let telegramID = this.commandConvo.data().telegramID
                 let params = value.split(/\s+/)
                 params = params.filter(param => param.length > 0)
-                if (params.length < 2)
+                if (params.length < 2) {
+                    await new ConvoHandler(telegramID).createNewCommandPartial('/enable2fa')
                     return `Please try again. Enter your mobile phone number in this format (without the brackets) ` +
                         `followed by your password: +[country][number] \nExample: +17185555555 yourpassword`
+                }
 
                 let number = params[0]
                 let password = params[1]
@@ -68,8 +77,15 @@ class SignupConvo {
                 if (number.charAt(0) === '+') {
                     number = number.substr(1)
                 }
+                let phoneNumberExists = this.firestore.checkIfPhoneNumberExists(number)
+                if (phoneNumberExists) {
+                    await new ConvoHandler(telegramID).createNewCommandPartial('/enable2fa')
+                    return { message: `Sorry, but that phone number is already registered. Please try again ` +
+                        `with a different number.`,
+                        keyboard: [[{text: 'Change Phone Number', callback_data: '/changeNumber'}]] }
+                }
 
-                let result = await new ActionHandler().enable2FA(this.commandConvo.data().telegramID, number, password)
+                let result = await new ActionHandler().enable2FA(telegramID, number, password)
 
                 if (result) {
                     return {
@@ -79,7 +95,10 @@ class SignupConvo {
                     }
                 }
             default:
-                return 'Not sure what to do here.'
+                return {
+                    message: 'Not sure what to do here.',
+                    keyboard: [[ {text: 'Try Again', callback_data: '/enable2fa' }]]
+                }
         }
     }
 
