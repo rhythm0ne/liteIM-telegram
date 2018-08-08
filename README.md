@@ -1,3 +1,5 @@
+![Lite.IM](liteIM.png?raw=true "Lite.IM")
+
 ## 1. What is Lite.IM?
 
 Lite.IM is a full-featured conversational Litecoin wallet designed to function entirely on Telegram. Users can signup and create their wallet, send and receive Litecoin, and check their balance and transaction history, all with a simple set of commands.
