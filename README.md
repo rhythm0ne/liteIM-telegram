@@ -40,7 +40,7 @@ Lite.IM is licensed under the [Creative Commons Attribution ShareAlike](https://
 
 ## 6. Contribute
 
-Please submit pull requests for big fixes and improvements. If you have any questions, please feel free to contact us on any of our community channels. Please make sure your code is working before submitting a pull request.
+Please submit pull requests for big fixes and improvements. If you have any questions, please feel free to contact us on any of our community channels. Please make sure your code is working before submitting a pull request. If you have a feature request, please use the [issues page](https://github.com/zulurepublic/liteIM-telegram/issues) and tag your issue with "feature-request".
 
 ## 7. Bug Reporting
 
