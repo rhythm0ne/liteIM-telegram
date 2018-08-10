@@ -9,7 +9,7 @@ const Enable2FAConvo = require('./conversations/enable2FA')
 const ChangeEmailConvo = require('./conversations/changeEmail')
 const ChangePasswordConvo = require('./conversations/changePassword')
 
-module.exports = async webhookData => {
+const parseCommand = async webhookData => {
     // console.log("IN:")
     // console.log(webhookData)
 
@@ -45,10 +45,6 @@ module.exports = async webhookData => {
         console.log(`sync: ${failure}`) //ignore sync failure
     })
 
-    if (await actionHandler.isUserWithout2FA(telegramID)) {
-        parsedMessage.command = '/enable2fa'
-    }
-
     let content, keyboard
 
     // start
@@ -77,9 +73,7 @@ module.exports = async webhookData => {
                     { text: 'Wallet', callback_data: '/receive wallet' },
                     { text: 'Email', callback_data: '/receive email' }
                 ],
-                [
-                    { text: 'Cancel', callback_data: '/help' }
-                ]
+                [{ text: 'Cancel', callback_data: '/help' }]
             ]
         } else {
             await actionHandler
@@ -106,13 +100,12 @@ module.exports = async webhookData => {
         await new ConvoHandler(telegramID)
             .createNewCommandPartial(parsedMessage.command)
             .then(async () => {
-                content = new SendConvo().initialMessage()
-                keyboard = [
-                    {
-                        text: 'Cancel',
-                        callback_data: '/clear'
-                    }
-                ]
+                let data = await new SendConvo().initialMessage(telegramID)
+                content = data
+                if (data.keyboard) {
+                    keyboard = data.keyboard
+                    content = data.message
+                }
             })
             .catch(async failure => {
                 console.log(failure)
@@ -125,8 +118,12 @@ module.exports = async webhookData => {
         await new ConvoHandler(telegramID)
             .createNewCommandPartial(parsedMessage.command)
             .then(async () => {
-                content = new SignupConvo().initialMessage()
-                keyboard = [{ text: 'Cancel', callback_data: '/start' }]
+                let data = new SignupConvo().initialMessage()
+                content = data
+                if (data.keyboard) {
+                    keyboard = data.keyboard
+                    content = data.message
+                }
             })
             .catch(async failure => {
                 console.log(failure)
@@ -189,13 +186,12 @@ module.exports = async webhookData => {
         await new ConvoHandler(telegramID)
             .createNewCommandPartial(parsedMessage.command)
             .then(async () => {
-                content = await new ChangePasswordConvo().initialMessage(telegramID)
-                keyboard = [
-                    {
-                        text: 'Cancel',
-                        callback_data: '/clear'
-                    }
-                ]
+                let data = await new ChangePasswordConvo().initialMessage(telegramID)
+                content = data
+                if (data.keyboard) {
+                    keyboard = data.keyboard
+                    content = data.message
+                }
             })
             .catch(async failure => {
                 console.log(failure)
@@ -208,13 +204,12 @@ module.exports = async webhookData => {
         await new ConvoHandler(telegramID)
             .createNewCommandPartial(parsedMessage.command)
             .then(async () => {
-                content = new ChangeEmailConvo().initialMessage()
-                keyboard = [
-                    {
-                        text: 'Cancel',
-                        callback_data: '/clear'
-                    }
-                ]
+                let data = new ChangeEmailConvo().initialMessage()
+                content = data
+                if (data.keyboard) {
+                    keyboard = data.keyboard
+                    content = data.message
+                }
             })
             .catch(async failure => {
                 console.log(failure)
@@ -227,11 +222,11 @@ module.exports = async webhookData => {
         await new ConvoHandler(telegramID)
             .createNewCommandPartial(parsedMessage.command)
             .then(async () => {
-                let response = new ExportConvo().initialMessage()
-                content = response
-                if (response.keyboard) {
-                    keyboard = response.keyboard
-                    content = response.message
+                let data = new ExportConvo().initialMessage()
+                content = data
+                if (data.keyboard) {
+                    keyboard = data.keyboard
+                    content = data.message
                 }
             })
             .catch(async failure => {
@@ -333,6 +328,31 @@ module.exports = async webhookData => {
                     ]
                 ]
             })
+    }
+    // request new two factor authentication code to be sent
+    else if (parsedMessage.command === '/requestNew2FACode') {
+        await new ConvoHandler(chatID)
+            .fetchCommandPartial()
+            .then(async convoPartial => {
+                let step = parsedMessage.params[0] ? parsedMessage.params[0] : null
+
+                if (step) {
+                    let stepValue = convoPartial.data()[step]
+                    let Firestore = require('./firestore_handler')
+                    await new Firestore().unsetCommandPartial(convoPartial.id, step)
+
+                    if (inputType === 'message') webhookData.message.text = stepValue
+                    else webhookData.callback_query.data = stepValue
+
+                    return doConversation(webhookData)
+                } else {
+                    let command = convoPartial.data().command
+                    if (inputType === 'message') webhookData.message.text = command
+                    else webhookData.callback_query.data = command
+
+                    return parseCommand(webhookData)
+                }
+            })
     } else if (parsedMessage.command === '/moreInlineCommands') {
         content = 'Here are some more commands you I can perform for you.'
         keyboard = 'p2'
@@ -345,13 +365,25 @@ module.exports = async webhookData => {
         return doConversation(webhookData)
     }
 
+    //ensure there is always an inline keyboard
+    if (!keyboard) {
+        if (
+            parsedMessage.command === '/signup' ||
+            parsedMessage.command === '/start'
+        ) {
+            keyboard = [[{ text: 'Cancel', callback_data: '/start' }]]
+        } else {
+            keyboard = [[{ text: 'Cancel', callback_data: '/help' }]]
+        }
+    }
+
     if (inputType === 'message') {
         try {
             let messageIdToEdit = await new Firestore().getBotMessageID(telegramID)
             if (messageIdToEdit.messageID)
                 await messenger.deleteMessage(chatID, messageIdToEdit.messageID)
         } catch (err) {
-            console.log (`Could not delete prior message. Error: ${err}`)
+            console.log(`Could not delete prior message. Error: ${err}`)
         }
         await messenger.sendMessage(content, messenger.inlineKeyboard(keyboard))
     } else if (inputType === 'callback')
@@ -368,7 +400,7 @@ const doConversation = async webhookData => {
         messageContent = message.text
         chatID = message.chat.id
         let Firestore = require('./firestore_handler')
-        let fetchMessageIdToEdit = await new Firestore().getBotMessageID(chatID) // <- this is the problem, change this for non-users
+        let fetchMessageIdToEdit = await new Firestore().getBotMessageID(chatID)
         messageID = fetchMessageIdToEdit.messageID
     } else {
         inputType = 'callback'
@@ -430,10 +462,10 @@ const doConversation = async webhookData => {
                         ]
                     }
 
-                    if (data.alert)
-                        messenger.answerCallback(data.alert, true)
+                    if (data.alert) messenger.answerCallback(data.alert, true)
                 })
                 .catch(async failure => {
+                    //TODO: check for start command here
                     content = failure
                     keyboard = [[{ text: 'Cancel', callback_data: '/help' }]]
                     if (failure.message) {
@@ -442,17 +474,40 @@ const doConversation = async webhookData => {
                     }
                 })
 
+            //ensure there is always an inline keyboard
+            if (!keyboard) {
+                if (
+                    convoPartial.data().command === '/signup' ||
+                    convoPartial.data().command === '/start'
+                ) {
+                    keyboard = [[{ text: 'Cancel', callback_data: '/start' }]]
+                } else {
+                    keyboard = [[{ text: 'Cancel', callback_data: '/help' }]]
+                }
+            }
+
             if (inputType === 'message') {
                 try {
-                    let messageIdToEdit = await new Firestore().getBotMessageID(telegramID)
+                    let messageIdToEdit = await new Firestore().getBotMessageID(
+                        telegramID
+                    )
                     if (messageIdToEdit.messageID)
-                        await messenger.deleteMessage(chatID, messageIdToEdit.messageID)
+                        await messenger.deleteMessage(
+                            chatID,
+                            messageIdToEdit.messageID
+                        )
                 } catch (err) {
-                    console.log (`Could not delete prior message. Error: ${err}`)
+                    console.log(`Could not delete prior message. Error: ${err}`)
                 }
-                await messenger.sendMessage(content, messenger.inlineKeyboard(keyboard))
+                await messenger.sendMessage(
+                    content,
+                    messenger.inlineKeyboard(keyboard)
+                )
             } else if (inputType === 'callback')
-                await messenger.editMessage(content, messenger.inlineKeyboard(keyboard))
+                await messenger.editMessage(
+                    content,
+                    messenger.inlineKeyboard(keyboard)
+                )
 
             return true
         })
@@ -533,3 +588,5 @@ const commandFormats = {
     help: '/help',
     clear: '/clear'
 }
+
+module.exports = parseCommand

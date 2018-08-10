@@ -1,7 +1,7 @@
 const Firestore = require('../firestore_handler')
 const ActionHandler = require('../action_handler')
 
-const steps = []
+const steps = ['code']
 
 class ChangePasswordConvo {
     constructor(commandConvo) {
@@ -19,52 +19,85 @@ class ChangePasswordConvo {
     async initialMessage(telegramID) {
         let result = await new ActionHandler().request2FA(telegramID)
         if (result) {
-            return `I see you'd like to change your password. Please send the code you just received, your ` +
-                `current password, and your new password, each separated by a space, or click "Cancel". \n` +
-                `Example: 1111 yourpassword yournewpassword`
+            return {
+                message: `I see you'd like to change your password. Please enter the security code you just received via SMS.`,
+                keyboard: [
+                    {text: 'New Code', callback_data: '/requestNew2FACode'},
+                    {text: 'Cancel', callback_data: '/clear'}
+                ]
+            }
         }
     }
 
     async complete(value) {
         let { telegramID } = this.commandConvo.data()
-        await this.firestore.clearCommandPartial(telegramID)
         try {
             let params = value.split(/\s+/)
             params = params.filter(param => param.length > 0)
-            if (params.length < 3)
-                return `Please send the code you just received, your current password, and your new password, each ` +
-                    `separated by a space, or click "Cancel". \nExample: 1111 yourpassword yournewpassword`
-
-            let code = params[0]
-            let currentPassword = params[1]
-            let newPassword = params[2]
-
-            let result = await new ActionHandler().check2FA(telegramID, code, currentPassword)
-            if (!result) {
+            if (params.length < 2)
                 return {
-                    message: `Please enter the correct code, followed by your current password and your new password, ` +
-                    `each separated by a space, or click "Cancel". \nExample: 1111 yourpassword yournewpassword`,
-                    keyboard: [{ text: 'Cancel', callback_data: '/help' }]
+                    message:
+                        `Please enter your current password followed by you new password, ` +
+                        `each separated by a space, or click "Cancel". \n\nExample: yourPassword yourNewPassword`,
+                    keyboard: [{ text: 'Cancel', callback_data: '/clear' }]
                 }
-            }
+
+            let currentPassword = params[0]
+            let newPassword = params[1]
 
             await new ActionHandler().changePassword(
                 telegramID,
                 currentPassword,
                 newPassword
             )
-            return { message: `You successfully changed your password to "${newPassword}". Please remember your ` +
-                `new password, but keep it safe from others, and please remember to clear this conversation to ` +
-                `remove sensitive information.`, keyboard: 'p1' }
+            await this.firestore.clearCommandPartial(telegramID)
+            return {
+                message:
+                    `You successfully changed your password to "${newPassword}". Please remember your ` +
+                    `new password, but keep it safe from others, and please remember to clear this conversation to ` +
+                    `remove sensitive information.`,
+                keyboard: 'p1'
+            }
         } catch (e) {
             return e.toString()
         }
     }
 
-    afterMessageForStep(step, value) {
+    async afterMessageForStep(step, value) {
         switch (step) {
+            case steps[0]:
+                let checkCode = await new ActionHandler().check2FA(
+                    this.commandConvo.data().telegramID,
+                    value
+                )
+
+                if (checkCode)
+                    return {
+                        message:
+                            `Please enter your current password followed by you new password, ` +
+                            `each separated by a space, or click "Cancel". \n\nExample: yourPassword yourNewPassword`,
+                        keyboard: [{ text: 'Cancel', callback_data: '/clear' }]
+                    }
+                else {
+                    await this.firestore.unsetCommandPartial(
+                        this.commandConvo.id,
+                        step
+                    )
+                    return {
+                        message:
+                            'You entered an invalid code, or the code we sent you has expired. Please try again.',
+                        keyboard: [
+                            { text: 'New Code', callback_data: '/requestNew2FACode' },
+                            { text: 'Cancel', callback_data: '/help' }
+                        ]
+                    }
+                }
             default:
-                return 'Not sure what to do here. Click "Cancel" to cancel the current command.'
+                return {
+                    message:
+                        'Not sure what to do here. Click "Cancel" to cancel the current command.',
+                    keyboard: [{ text: 'Cancel', callback_data: '/clear' }]
+                }
         }
     }
 
@@ -92,6 +125,8 @@ class ChangePasswordConvo {
 
     async validateStep(step, value) {
         switch (step) {
+            case steps[0]:
+                return true
             default:
                 return false
         }

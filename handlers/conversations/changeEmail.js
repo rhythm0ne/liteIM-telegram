@@ -1,7 +1,7 @@
 const Firestore = require('../firestore_handler')
 const ActionHandler = require('../action_handler')
 
-const steps = ['newEmail']
+const steps = ['newEmail', 'code']
 
 class ChangeEmailConvo {
     constructor(commandConvo) {
@@ -23,32 +23,14 @@ class ChangeEmailConvo {
     async complete(value) {
         let { telegramID, newEmail } = this.commandConvo.data()
         try {
-            let params = value.split(/\s+/)
-            params = params.filter(param => param.length > 0)
-            if (params.length < 2)
-                return `Please enter the two factor code you received followed by your password, separated ` +
-                    `by a space. \nExample: 1111 yourpassword`
-
-            let code = params[0]
-            let password = params[1]
-
-            let result = await new ActionHandler().check2FA(telegramID, code, password)
-            if (!result) {
-                return {
-                    message: `Please enter the correct code, followed by your current password, ` +
-                    `separated by a space, or click "Cancel". \nExample: 1111 yourpassword`,
-                    keyboard: [{ text: 'Cancel', callback_data: '/help' }]
-                }
-            }
-            await new ActionHandler().changeEmail(
-                telegramID,
-                newEmail,
-                password
-            )
+            await new ActionHandler().changeEmail(telegramID, newEmail, value)
             await this.firestore.clearCommandPartial(telegramID)
-            return { message: `Great! Your email address has been updated to ${newEmail}. Please remember ` +
-                `to clear this conversation to remove sensitive information.`,
-                keyboard: 'p1' }
+            return {
+                message:
+                    `Great! Your email address has been updated to ${newEmail}. Please remember ` +
+                    `to clear this conversation to remove sensitive information.`,
+                keyboard: 'p1'
+            }
         } catch (e) {
             return e.toString()
         }
@@ -57,12 +39,80 @@ class ChangeEmailConvo {
     async afterMessageForStep(step, value) {
         switch (step) {
             case steps[0]:
-                let result = await new ActionHandler().request2FA(this.commandConvo.data().telegramID)
-                if (result) {
-                    return `Perfect, I'll just need you to provide the two factor code I just sent you along with ` +
-                        `your password, separated by a space, before I can change your email address to ${value}, ` +
-                        `or click "Cancel". \nExample: 1111 yourpassword`
+                let emailExists = false
+                try {
+                    await this.firestore.getUserByEmail(value)
+                    emailExists = true
+                } catch (e) {} //ignore this, it just means the email address does not exist, which is what we want
+
+                if (emailExists) {
+                    await this.firestore.unsetCommandPartial(
+                        this.commandConvo.id,
+                        step
+                    )
+                    return {
+                        message: `Sorry, but that email address is already registered. Please use a different one.`,
+                        keyboard: [{ text: 'Cancel', callback_data: '/start' }]
+                    }
                 }
+
+                let result = await new ActionHandler().request2FA(
+                    this.commandConvo.data().telegramID
+                )
+                if (result)
+                    return {
+                        message: `Please enter the two factor authentication code you received via SMS.`,
+                        keyboard: [
+                            {
+                                text: 'New Code',
+                                callback_data: '/requestNew2FACode newEmail'
+                            },
+                            { text: 'Cancel', callback_data: '/help' }
+                        ]
+                    }
+                else {
+                    await this.firestore.unsetCommandPartial(
+                        this.commandConvo.id,
+                        step
+                    )
+                    return {
+                        message:
+                            'Sorry, I had an issue with your request. Please try again.',
+                        keyboard: [{ text: 'Cancel', callback_data: '/help' }]
+                    }
+                }
+
+            case steps[1]:
+                let checkCode = await new ActionHandler().check2FA(
+                    this.commandConvo.data().telegramID,
+                    value
+                )
+
+                if (checkCode)
+                    return {
+                        message: `Please reply with your password if you want to change your email to ${
+                            this.commandConvo.data().newEmail
+                        }.`,
+                        keyboard: [{ text: 'Cancel', callback_data: '/help' }]
+                    }
+                else {
+                    await this.firestore.unsetCommandPartial(
+                        this.commandConvo.id,
+                        step
+                    )
+                    return {
+                        message:
+                            'You entered an invalid code, or the code we sent you has expired. Please try again.',
+                        keyboard: [
+                            {
+                                text: 'New Code',
+                                callback_data: '/requestNew2FACode newEmail'
+                            },
+                            { text: 'Cancel', callback_data: '/help' }
+                        ]
+                    }
+                }
+
             default:
                 return 'Not sure what to do here. Click "Cancel" to cancel the current command.'
         }
@@ -94,7 +144,8 @@ class ChangeEmailConvo {
     async validateStep(step, value) {
         switch (step) {
             case steps[0]:
-                //validate email address
+                return new ActionHandler().isEmail(value)
+            case steps[1]:
                 return true
             default:
                 return false

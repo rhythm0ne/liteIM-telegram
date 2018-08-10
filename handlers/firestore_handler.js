@@ -3,7 +3,7 @@ const firebase = require('firebase-admin')
 let credential, databaseURL
 if (process.env.STAGE === 'production') {
     credential = require('../instances/firebase_prod_credentials.json')
-    databaseURL =process.env.FIREBASE_PROD_URL
+    databaseURL = process.env.FIREBASE_PROD_URL
 } else if (process.env.STAGE === 'staging') {
     credential = require('../instances/firebase_staging_credentials.json')
     databaseURL = process.env.FIREBASE_STAGING_URL
@@ -56,15 +56,16 @@ class FirestoreHandler {
         }
 
         let key
-        if (process.env.STAGE === 'production') key = process.env.FIREBASE_PROD_API_KEY
-        else if (process.env.STAGE === 'staging') key = process.env.FIREBASE_STAGING_API_KEY
+        if (process.env.STAGE === 'production')
+            key = process.env.FIREBASE_PROD_API_KEY
+        else if (process.env.STAGE === 'staging')
+            key = process.env.FIREBASE_STAGING_API_KEY
         else key = process.env.FIREBASE_DEV_API_KEY
 
         return new Promise(function(resolve, reject) {
             request(
                 {
-                    url:
-                        `https://www.googleapis.com/identitytoolkit/v3/relyingparty/verifyPassword?key=${key}`,
+                    url: `https://www.googleapis.com/identitytoolkit/v3/relyingparty/verifyPassword?key=${key}`,
                     method: 'POST',
                     json: true,
                     body: data
@@ -131,7 +132,7 @@ class FirestoreHandler {
             .doc(firebaseID)
             .get()
         let user = telegramUserDoc.exists ? telegramUserDoc.data() : null
-        if (!user) throw('User not found by firebaseID.')
+        if (!user) throw 'User not found by firebaseID.'
         return user
     }
 
@@ -154,27 +155,28 @@ class FirestoreHandler {
         if (startTime) query = query.where('time', '<=', Number(startTime))
 
         let transactions = []
-        await query.get()
-            .then(snapshot => {
-                if (snapshot.size <= 0) throw 'No transactions found'
-                snapshot.forEach(transaction => {
-                    if (transaction.exists){
-                        let tx = transaction.data()
-                        transactions.push(tx)
-                    }
-                })
+        await query.get().then(snapshot => {
+            if (snapshot.size <= 0) throw 'No transactions found'
+            snapshot.forEach(transaction => {
+                if (transaction.exists) {
+                    let tx = transaction.data()
+                    transactions.push(tx)
+                }
             })
+        })
 
         if (startTime) {
-            let userDoc = await this.collection('telegramUsers').doc(userID).get()
+            let userDoc = await this.collection('telegramUsers')
+                .doc(userID)
+                .get()
             let startID = userDoc.data().nextTransactionID
 
             let index
-            for(let i = 0; i < transactions.length; i++) {
-                if(transactions[i].txid === startID) index = i
+            for (let i = 0; i < transactions.length; i++) {
+                if (transactions[i].txid === startID) index = i
             }
 
-            transactions = transactions.slice(index, index+4)
+            transactions = transactions.slice(index, index + 4)
         } else transactions = transactions.slice(0, 4)
 
         return transactions
@@ -202,6 +204,15 @@ class FirestoreHandler {
         return await this.collection('commandPartials')
             .doc(id)
             .set(commandPartial, { merge })
+    }
+
+    async unsetCommandPartial(id, field) {
+        let FieldValue = require('firebase-admin').firestore.FieldValue
+        return await this.collection('commandPartials')
+            .doc(id)
+            .update({
+                [field]: FieldValue.delete()
+            })
     }
 
     async clearCommandPartial(telegramID) {
@@ -234,13 +245,19 @@ class FirestoreHandler {
             .then(snapshot => {
                 if (snapshot.exists) {
                     return snapshot.data()
-                } else throw `Could not get the ongoing conversation for this user.`
+                } else {
+                    console.log(
+                        `Could not get the ongoing conversation for ${telegramID}.`
+                    )
+                    return false
+                }
             })
             .catch(err => {
-                console.log(err)
-                throw `Could not get the ongoing conversation for this user.`
+                console.log(
+                    `Could not get the ongoing conversation for ${telegramID}.`
+                )
+                return false
             })
-
     }
 
     async setNextTransactionID(userID, nextID) {
@@ -255,10 +272,154 @@ class FirestoreHandler {
             .limit(1)
             .get()
             .then(snapshot => {
-                return snapshot && snapshot.exists
+                return snapshot.size > 0 && snapshot.docs[0].exists
             })
             .catch(err => {
                 throw err
+            })
+    }
+
+    async enable2FA(telegramID, phone, code) {
+        telegramID = telegramID.toString()
+        await this.collection('two_factor')
+            .doc(telegramID)
+            .set({
+                activated: false,
+                type: 'sms',
+                phoneNumber: phone,
+                credentialExpires: null,
+                onLogin: true,
+                onTransaction: false
+            })
+            .then(() => {
+                this.collection('pending_two_factor')
+                    .doc(phone)
+                    .set({
+                        type: 'sms',
+                        actionType: 'enable',
+                        textMatch: code,
+                        belongsTo: telegramID,
+                        phone: phone,
+                        expiresAt: Date.now() + 120 * 1000
+                    })
+                    .then(() => {
+                        return true
+                    })
+                    .catch(err => {
+                        console.log(err)
+                        throw err
+                    })
+            })
+            .catch(err => {
+                console.log(err)
+                throw err
+            })
+    }
+
+    async request2FA(telegramID, code) {
+        let fetchTelegramUser = await this.fetchTelegramUser(telegramID)
+        let firebaseID = fetchTelegramUser.id
+
+        return await this.collection('two_factor')
+            .doc(firebaseID)
+            .get()
+            .then(async doc => {
+                if (doc && doc.exists) {
+                    const phone = doc.data().phoneNumber
+                    return await this.collection('pending_two_factor')
+                        .doc(phone)
+                        .set({
+                            type: 'sms',
+                            actionType: 'enable',
+                            textMatch: code,
+                            belongsTo: firebaseID,
+                            phone: phone,
+                            expiresAt: Date.now() + 120 * 1000
+                        })
+                        .then(() => {
+                            return phone
+                        })
+                        .catch(err => {
+                            console.log(err)
+                            throw err
+                        })
+                } else throw 'Could not find phone number for this user.'
+            })
+            .catch(err => {
+                console.log(err)
+                throw err
+            })
+    }
+
+    async check2FA(telegramID, code, firebaseID = null) {
+        let userID = firebaseID ? firebaseID : telegramID.toString()
+        let twoFactorRef = this.collection('two_factor').doc(userID)
+
+        let twoFactorDoc = await twoFactorRef.get()
+        let twoFactor = twoFactorDoc.exists ? twoFactorDoc.data() : null
+        if (!twoFactor) throw 'Two factor is not enabled'
+
+        let pendingDoc = await this.collection('pending_two_factor')
+            .doc(twoFactor.phoneNumber)
+            .get()
+        let pending = pendingDoc.exists ? pendingDoc.data() : null
+        if (!pending) throw 'There is no pending two factor for this number.'
+
+        if (pending.expiresAt <= Date.now()) return false
+        if (pending.textMatch !== code.toString()) return false
+
+        try {
+            let obj = { credentialExpires: Date.now() + 300 * 1000 }
+            if (pending.actionType === 'enable') obj.activated = true
+            if (pending.actionType === 'disable') obj.activated = false
+
+            await twoFactorRef.set(obj, { merge: true })
+
+            return true
+        } catch (err) {
+            console.log(err)
+            throw err
+        }
+    }
+
+    async unsetPartial2FA(telegramID) {
+        await this.collection('two_factor')
+            .doc(telegramID.toString())
+            .get()
+            .then(doc => {
+                if (doc && doc.exists) {
+                    doc.ref.delete()
+                }
+            })
+        return true
+    }
+
+    async updateIdOn2FA(telegramID) {
+        let fetchTelegramUser = await this.fetchTelegramUser(telegramID)
+        let firebaseID = fetchTelegramUser.id
+
+        await this.collection('two_factor')
+            .doc(telegramID.toString())
+            .get()
+            .then(doc => {
+                if (doc && doc.exists) {
+                    let data = doc.data()
+                    this.collection('two_factor')
+                        .doc(firebaseID)
+                        .set(data)
+                        .then(() => {
+                            doc.ref.delete()
+                            return true
+                        })
+                        .catch(err => {
+                            console.log(err)
+                            throw 'Could not update the ID of the 2FA entry.'
+                        })
+                } else
+                    throw 'Could not find 2FA for this user.'.catch(err => {
+                        console.log(err)
+                        throw 'Could not find 2FA for this user.'
+                    })
             })
     }
 
@@ -270,20 +431,13 @@ class FirestoreHandler {
             .then(snapshot => {
                 if (snapshot.docs[0] && snapshot.docs[0].exists) {
                     return snapshot.docs[0].ref.set({ callbackID }, { merge: true })
-                } else throw 'Could not fetch user to update messageID in telegramUsers'
+                } else
+                    throw 'Could not fetch user to update messageID in telegramUsers'
             })
             .catch(err => {
                 throw err
             })
-
     }
 }
-
-// Helpers
-
-// const handleError = (error, callback) => {
-//   console.log(error);
-//   if(callback) callback();
-// };
 
 module.exports = FirestoreHandler

@@ -1,9 +1,15 @@
 const commandResponder = require('./commands')
 
 module.exports.webhook = async (event, context, callback) => {
-    let webhookData = JSON.parse(event.body)
-    let commandResult = await commandResponder(webhookData)
-    let success = !!commandResult
+    let success
+    try {
+        let webhookData = JSON.parse(event.body)
+        let commandResult = await commandResponder(webhookData)
+        let success = !!commandResult
+    } catch (e) {
+        console.log(e)
+        success = false
+    }
 
     let response = {
         statusCode: 200,

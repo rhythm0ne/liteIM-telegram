@@ -1,6 +1,6 @@
 {
   "name": "liteIM-telegram",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "main": "utils/serverless_handler.js",
   "repository": {
     "type": "git",
@@ -17,7 +17,7 @@
       "email": "jose@zulurepublic.io"
     }
   ],
-  "license": "CC-BY-SA-4.0",
+  "license": "AGPL-3.0-only",
   "bugs": {
     "url": "https://github.com/zulurepublic/liteIM-telegram/issues"
   },
@@ -29,7 +29,8 @@
     "request": "^2.87.0",
     "request-promise-native": "^1.0.5",
     "telegraf": "^3.21.0",
-    "uuid": "^3.3.2"
+    "uuid": "^3.3.2",
+    "plivo": "^4.0.0"
   },
   "description": ""
 }

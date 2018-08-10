@@ -3,7 +3,7 @@ const ActionHandler = require('../action_handler')
 const EmailWalletValidator = require('../../utils/validators/email_wallet')
 const NumberValidator = require('../../utils/validators/number')
 
-const steps = ['to', 'currency', 'amount']
+const steps = ['to', 'currency', 'amount', 'code']
 
 const keyboards = {
     currency: [
@@ -26,49 +26,40 @@ class SendConvo {
         }
     }
 
-    initialMessage() {
-        return 'Who would you like to send LTC to? You can send me a valid email address or a valid Litecoin address.'
+    async initialMessage(telegramID) {
+        let getBalance = await new ActionHandler().balance(
+            telegramID
+        )
+        if (getBalance && getBalance.balance) {
+            if (Number(getBalance.balance) > 0) {
+                return {
+                    message: 'Who would you like to send LTC to? You can send me a valid email address or a valid Litecoin address.',
+                    keyboard: [[{text: 'Cancel', callback_data: '/clear'}]]
+                }
+            } else return {
+                message: `You don't have any LTC to send silly! Click "Receive" to fund your Lite.IM wallet.`,
+                keyboard: [[
+                    {text: 'Receive', callback_data: '/receive'},
+                    {text: 'Cancel', callback_data: '/clear'}
+                ]]
+            }
+        } else return {
+            message: 'I was unable to fetch your balance. Click "Cancel" to start over.',
+            keyboard: [[{ text: 'Cancel', callback_data: '/clear' }]]
+        }
     }
 
     async complete(value) {
         let { to, amount, telegramID } = this.commandConvo.data()
 
         try {
-            let params = value.split(/\s+/)
-            params = params.filter(param => param.length > 0)
-            if (params.length < 2)
-                return (
-                    `Please enter the two factor code you received followed by your password, separated by a ` +
-                    `space. \nExample: 1111 yourpassword`
-                )
-
-            let code = params[0]
-            let password = params[1]
-
-            let result = await new ActionHandler().check2FA(
-                telegramID,
-                code,
-                password
-            )
-            if (!result) {
-                return {
-                    message:
-                        `Please enter the correct code, followed by your current password, ` +
-                        `separated by a space, or click "Cancel". \nExample: 1111 yourpassword`,
-                    keyboard: [{ text: 'Cancel', callback_data: '/help' }]
-                }
-            }
-            let data = await new ActionHandler().send(
-                to,
-                amount,
-                password,
-                telegramID
-            )
+            let data = await new ActionHandler().send(to, amount, value, telegramID)
             let { txid, toUser } = data
 
             if (txid) {
                 let subdomain =
-                    process.env.STAGE === 'production' || process.env.STAGE === 'staging'
+                    process.env.STAGE === 'production' ||
+                    process.env.STAGE === 'staging'
                         ? 'insight'
                         : 'testnet'
 
@@ -112,15 +103,14 @@ class SendConvo {
 
                 return {
                     message:
-                    `Transaction sent! Click below to see the transaction details. Please remember ` +
-                    `to clear this conversation to remove sensitive information.`,
+                        `Transaction sent! Click below to see the transaction details. Please remember ` +
+                        `to clear this conversation to remove sensitive information.`,
                     keyboard: keyboardLayout
                 }
             } else {
                 return {
-                    message:
-                    `There was a problem with your transaction, please try again.`,
-                    keyboard: [[ { text: 'Cancel', callback_data: '/clear' }]]
+                    message: `There was a problem with your transaction, please try again.`,
+                    keyboard: [[{ text: 'Cancel', callback_data: '/clear' }]]
                 }
             }
         } catch (e) {
@@ -151,10 +141,14 @@ class SendConvo {
             case steps[2]:
                 let amount = value
                 if (amount === 'all') {
-                    let getBalance = await new ActionHandler().balance(this.commandConvo.data().telegramID)
+                    let getBalance = await new ActionHandler().balance(
+                        this.commandConvo.data().telegramID
+                    )
                     if (getBalance && getBalance.balance) {
                         let balance = Number(getBalance.balance)
-                        let unconfirmedBalance = Number(getBalance.unconfirmedBalance)
+                        let unconfirmedBalance = Number(
+                            getBalance.unconfirmedBalance
+                        )
 
                         amount = balance
                         if (unconfirmedBalance > 0 && unconfirmedBalance < balance)
@@ -175,13 +169,17 @@ class SendConvo {
                                 throw err
                             }
                         }
-                    }
-                    else return { message: 'I was unable to fetch your balance. Click "Cancel" to start over.',
-                        keyboard: [[{ text: 'Cancel', callback_data: '/clear' }]] }
+                    } else
+                        return {
+                            message:
+                                'I was unable to fetch your balance. Click "Cancel" to start over.',
+                            keyboard: [[{ text: 'Cancel', callback_data: '/clear' }]]
+                        }
                 }
 
                 if (this.commandConvo.data().currency === '$') {
-                    if (typeof amount === 'string' && amount.charAt(0) === '$') amount = amount.substr(1)
+                    if (typeof amount === 'string' && amount.charAt(0) === '$')
+                        amount = amount.substr(1)
                     try {
                         let rate = await require('../../utils/getPrice')()
                         let amountLTC = (amount / rate).toFixed(4)
@@ -199,14 +197,53 @@ class SendConvo {
                 let result = await new ActionHandler().request2FA(
                     this.commandConvo.data().telegramID
                 )
-                if (result) {
-                    return (
-                        `If you want to send ${this.commandConvo.data().currency}${amount} to ${
-                            this.commandConvo.data().to
-                        } reply with the 2FA code ` +
-                        `you just received along with your password, separated by a space, or click "Cancel". \n` +
-                        `Example: 1111 yourpassword`
+                if (result)
+                    return {
+                        message: `Please enter the two factor authentication code you received via SMS.`,
+                        keyboard: [
+                            { text: 'New Code', callback_data: '/requestNew2FACode amount' },
+                            { text: 'Cancel', callback_data: '/help' }
+                        ]
+                    }
+                else {
+                    await this.firestore.unsetCommandPartial(
+                        this.commandConvo.id,
+                        step
                     )
+                    return {
+                        message:
+                            'Sorry, I had an issue with your request. Please try again.',
+                        keyboard: [{ text: 'Cancel', callback_data: '/help' }]
+                    }
+                }
+            case steps[3]:
+                let checkCode = await new ActionHandler().check2FA(
+                    this.commandConvo.data().telegramID,
+                    value
+                )
+
+                if (checkCode)
+                    return {
+                        message: `If you want to send ${
+                            this.commandConvo.data().currency
+                        }${this.commandConvo.data().amount} to ${
+                            this.commandConvo.data().to
+                        } then please reply with your password so I can continue.`,
+                        keyboard: [{ text: 'Cancel', callback_data: '/help' }]
+                    }
+                else {
+                    await this.firestore.unsetCommandPartial(
+                        this.commandConvo.id,
+                        step
+                    )
+                    return {
+                        message:
+                            'You entered an invalid code, or the code we sent you has expired. Please try again.',
+                        keyboard: [
+                            { text: 'New Code', callback_data: '/requestNew2FACode amount' },
+                            { text: 'Cancel', callback_data: '/help' }
+                        ]
+                    }
                 }
             default:
                 throw 'Not sure what to do here. Click "Cancel" to start over.'
@@ -246,13 +283,15 @@ class SendConvo {
                 let ah = new ActionHandler()
                 if (ah.isEmail(value))
                     return await new EmailWalletValidator(value).validate()
-                else if (ah.isLitecoinAddress(value)) return true
+                else return ah.isLitecoinAddress(value)
             case steps[1]:
                 return value === '$' || value === 'Ł'
             case steps[2]:
                 if (value === 'all') return true
                 if (value.charAt(0) === '$') value = value.substr(1)
                 return new NumberValidator(value).validate()
+            case steps[3]:
+                return true
             default:
                 return false
         }

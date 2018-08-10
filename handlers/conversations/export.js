@@ -1,10 +1,16 @@
 const Firestore = require('../firestore_handler')
 const ActionHandler = require('../action_handler')
 
-const steps = ['type']
+const steps = ['type', 'code']
 
 const keyboards = {
-    'type': [[{ text: 'key', callback_data: 'key' }, { text: 'phrase', callback_data: 'phrase' }], [{ text: 'Cancel', callback_data: '/clear' }]]
+    type: [
+        [
+            { text: 'key', callback_data: 'key' },
+            { text: 'phrase', callback_data: 'phrase' }
+        ],
+        [{ text: 'Cancel', callback_data: '/clear' }]
+    ]
 }
 
 class ExportConvo {
@@ -22,9 +28,10 @@ class ExportConvo {
 
     initialMessage() {
         return {
-            message: "I can help you export your wallet so you can import it into another wallet. Just remember to " +
-            "keep this safe, and don't share it with anyone! Do you want me to show you your private key WIF, " +
-            "or your mnemonic seed phrase?",
+            message:
+                'I can help you export your wallet so you can import it into another wallet. Just remember to ' +
+                "keep this safe, and don't share it with anyone! Do you want me to show you your private key WIF, " +
+                'or your mnemonic seed phrase?',
             keyboard: keyboards['type']
         }
     }
@@ -32,29 +39,18 @@ class ExportConvo {
     async complete(value) {
         let { telegramID, type } = this.commandConvo.data()
         try {
-            let params = value.split(/\s+/)
-            params = params.filter(param => param.length > 0)
-            if (params.length < 2)
-                return `Please enter the two factor code you received followed by your password, separated by a space. \nExample: 1111 yourpassword`
-
-            let code = params[0]
-            let password = params[1]
-
-            let result = await new ActionHandler().check2FA(telegramID, code, password)
-            if (!result) {
-                return {
-                    message: `Please enter the correct code, followed by your current password, ` +
-                    `separated by a space, or click "Cancel". \nExample: 1111 yourpassword`,
-                    keyboard: [{ text: 'Cancel', callback_data: '/help' }]
-                }
-            }
-            let secret = await new ActionHandler().export(telegramID, type, password)
+            let secret = await new ActionHandler().export(telegramID, type, value)
             await this.firestore.clearCommandPartial(telegramID)
-            if (type === 'key') return { message: `<pre>${secret}</pre>`,
-                keyboard: [[{ text: 'Main Menu', callback_data: '/help' }]] }
-            else if (type === 'phrase') return { message: `<pre>${secret}</pre>`,
-                keyboard: [[{ text: 'Main Menu', callback_data: '/help' }]] }
-
+            if (type === 'key')
+                return {
+                    message: `<pre>${secret}</pre>`,
+                    keyboard: [[{ text: 'Main Menu', callback_data: '/help' }]]
+                }
+            else if (type === 'phrase')
+                return {
+                    message: `<pre>${secret}</pre>`,
+                    keyboard: [[{ text: 'Main Menu', callback_data: '/help' }]]
+                }
         } catch (e) {
             return e.toString()
         }
@@ -63,12 +59,53 @@ class ExportConvo {
     async afterMessageForStep(step, value) {
         switch (step) {
             case steps[0]:
-                let result = await new ActionHandler().request2FA(this.commandConvo.data().telegramID)
-                if (result) {
-                    return `Reply with the 2FA code you just received along with your password, separated by a ` +
-                    `space, or click "Cancel". \nExample: 1111 yourpassword`
+                let result = await new ActionHandler().request2FA(
+                    this.commandConvo.data().telegramID
+                )
+                if (result)
+                    return {
+                        message: `Please enter the two factor authentication code you received via SMS.`,
+                        keyboard: [
+                            { text: 'New Code', callback_data: '/requestNew2FACode type' },
+                            { text: 'Cancel', callback_data: '/help' }
+                        ]
+                    }
+                else {
+                    await this.firestore.unsetCommandPartial(
+                        this.commandConvo.id,
+                        step
+                    )
+                    return {
+                        message:
+                            'Sorry, I had an issue with your request. Please try again.',
+                        keyboard: [{ text: 'Cancel', callback_data: '/help' }]
+                    }
                 }
+            case steps[1]:
+                let checkCode = await new ActionHandler().check2FA(
+                    this.commandConvo.data().telegramID,
+                    value
+                )
 
+                if (checkCode)
+                    return {
+                        message: `Please reply with your password and I'll get that for you right away.`,
+                        keyboard: [{ text: 'Cancel', callback_data: '/help' }]
+                    }
+                else {
+                    await this.firestore.unsetCommandPartial(
+                        this.commandConvo.id,
+                        step
+                    )
+                    return {
+                        message:
+                            'You entered an invalid code, or the code we sent you has expired. Please try again.',
+                        keyboard: [
+                            { text: 'New Code', callback_data: '/requestNew2FACode type' },
+                            { text: 'Cancel', callback_data: '/help' }
+                            ]
+                    }
+                }
             default:
                 return 'Not sure what to do here. Reply /clear to cancel the current command.'
         }
@@ -85,7 +122,11 @@ class ExportConvo {
 
     async setStep(step, value) {
         let validated = await this.validateStep(step, value)
-        if (!validated) throw { message: `Please enter a valid ${step}.`, keyboard: keyboards[step] }
+        if (!validated)
+            throw {
+                message: `Please enter a valid ${step}.`,
+                keyboard: keyboards[step]
+            }
         let params = {}
         params[step] = value
         try {
@@ -99,7 +140,9 @@ class ExportConvo {
     async validateStep(step, value) {
         switch (step) {
             case steps[0]:
-                return (value === 'key' || value === 'phrase')
+                return value === 'key' || value === 'phrase'
+            case steps[1]:
+                return true
             default:
                 return false
         }
