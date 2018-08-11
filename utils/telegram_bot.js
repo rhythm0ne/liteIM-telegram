@@ -14,6 +14,10 @@ class TelegramBot {
         return await this.bot.telegram.sendMessage(id, text, opts)
     }
 
+    async sendPhoto(id, url, opts) {
+        return await this.bot.telegram.sendPhoto(id, url, opts)
+    }
+
     async answerCallback(id, text, alert = false, extra = null) {
         return await this.bot.telegram.answerCbQuery(id, text, alert, extra)
     }

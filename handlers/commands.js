@@ -45,6 +45,13 @@ const parseCommand = async webhookData => {
         console.log(`sync: ${failure}`) //ignore sync failure
     })
 
+    if (
+        (await actionHandler.isUserWithout2FA(telegramID)) &&
+        parsedMessage.command !== '/requestNew2FACode'
+    ) {
+        parsedMessage.command = '/enable2fa'
+    }
+
     let content, keyboard
 
     // start
@@ -67,10 +74,11 @@ const parseCommand = async webhookData => {
     else if (parsedMessage.command === '/receive') {
         let type = parsedMessage.params[0] ? parsedMessage.params[0] : null
         if (!type) {
-            content = `Would you like to see your Litecoin wallet address, or your registered email address?`
+            content = `Would you like to see your Litecoin wallet address, a QR code, or your registered email address?`
             keyboard = [
                 [
                     { text: 'Wallet', callback_data: '/receive wallet' },
+                    { text: 'QR', callback_data: '/receive qr' },
                     { text: 'Email', callback_data: '/receive email' }
                 ],
                 [{ text: 'Cancel', callback_data: '/help' }]
@@ -83,6 +91,29 @@ const parseCommand = async webhookData => {
                     if (type === 'wallet') {
                         content = wallet.toString()
                         keyboard = 'p1'
+                    } else if (type === 'qr') {
+                        let address = wallet.toString()
+                        let url = `https://chart.googleapis.com/chart?chs=250x250&cht=qr&chl=litecoin:${address}`
+
+                        try {
+                            let messageIdToDelete = await new Firestore().getBotMessageID(
+                                telegramID
+                            )
+                            if (messageIdToDelete.messageID)
+                                await messenger.deleteMessage(
+                                    chatID,
+                                    messageIdToDelete.messageID
+                                )
+                        } catch (err) {
+                            console.log(
+                                `Could not delete prior message. Error: ${err}`
+                            )
+                        }
+                        await messenger.sendPhoto(
+                            url,
+                            address,
+                            messenger.inlineKeyboard('p1')
+                        )
                     } else if (type === 'email') {
                         content = email.toString()
                         keyboard = 'p1'
@@ -93,6 +124,8 @@ const parseCommand = async webhookData => {
                     content = `I had a problem looking up your receiving addresses. Please try again, sorry about that. 😔`
                     keyboard = 'p1'
                 })
+
+            if (type === 'qr') return true
         }
     }
     // send
@@ -331,11 +364,10 @@ const parseCommand = async webhookData => {
     }
     // request new two factor authentication code to be sent
     else if (parsedMessage.command === '/requestNew2FACode') {
-        await new ConvoHandler(chatID)
+        return await new ConvoHandler(chatID)
             .fetchCommandPartial()
             .then(async convoPartial => {
                 let step = parsedMessage.params[0] ? parsedMessage.params[0] : null
-
                 if (step) {
                     let stepValue = convoPartial.data()[step]
                     let Firestore = require('./firestore_handler')
@@ -387,7 +419,15 @@ const parseCommand = async webhookData => {
         }
         await messenger.sendMessage(content, messenger.inlineKeyboard(keyboard))
     } else if (inputType === 'callback')
-        await messenger.editMessage(content, messenger.inlineKeyboard(keyboard))
+        try {
+            await messenger.editMessage(content, messenger.inlineKeyboard(keyboard))
+        } catch (err) {
+            console.log(`Failed to edit message with error: ${err}`)
+            let messageIdToEdit = await new Firestore().getBotMessageID(telegramID)
+            if (messageIdToEdit.messageID)
+                await messenger.deleteMessage(chatID, messageIdToEdit.messageID)
+            await messenger.sendMessage(content, messenger.inlineKeyboard(keyboard))
+        }
 
     return true
 }
@@ -504,10 +544,25 @@ const doConversation = async webhookData => {
                     messenger.inlineKeyboard(keyboard)
                 )
             } else if (inputType === 'callback')
-                await messenger.editMessage(
-                    content,
-                    messenger.inlineKeyboard(keyboard)
-                )
+                try {
+                    await messenger.editMessage(
+                        content,
+                        messenger.inlineKeyboard(keyboard)
+                    )
+                } catch (_) {
+                    let messageIdToEdit = await new Firestore().getBotMessageID(
+                        telegramID
+                    )
+                    if (messageIdToEdit.messageID)
+                        await messenger.deleteMessage(
+                            chatID,
+                            messageIdToEdit.messageID
+                        )
+                    await messenger.sendMessage(
+                        content,
+                        messenger.inlineKeyboard(keyboard)
+                    )
+                }
 
             return true
         })

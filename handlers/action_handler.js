@@ -256,6 +256,7 @@ class ActionHandler {
             )
         } catch (err) {
             console.log(`enable2FA threw: ${err}`)
+            if (err.includes === 'Insufficient credits') throw 'Insufficient credits'
             throw 'Sorry, I had an issue with your request. Please try again.'
         }
     }
@@ -275,15 +276,18 @@ class ActionHandler {
         }
     }
 
-    async check2FA(telegramID, code) {
+    async check2FA(telegramID, code, signup = false) {
         try {
             let firebaseID
-            try {
-                let getTelegramUser = await this.firestore.fetchTelegramUser(
-                    telegramID
-                )
-                firebaseID = getTelegramUser.id
-            } catch (_) {} //ignore exception, this just means the user is signing up
+
+            if (!signup) {
+                try {
+                    let getTelegramUser = await this.firestore.fetchTelegramUser(
+                        telegramID
+                    )
+                    firebaseID = getTelegramUser.id
+                } catch (_) {} //ignore exception, this just means the user is signing up
+            }
 
             return await this.firestore.check2FA(telegramID, code, firebaseID)
         } catch (err) {

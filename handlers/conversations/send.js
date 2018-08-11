@@ -27,26 +27,30 @@ class SendConvo {
     }
 
     async initialMessage(telegramID) {
-        let getBalance = await new ActionHandler().balance(
-            telegramID
-        )
+        let getBalance = await new ActionHandler().balance(telegramID)
         if (getBalance && getBalance.balance) {
             if (Number(getBalance.balance) > 0) {
                 return {
-                    message: 'Who would you like to send LTC to? You can send me a valid email address or a valid Litecoin address.',
-                    keyboard: [[{text: 'Cancel', callback_data: '/clear'}]]
+                    message:
+                        'Who would you like to send LTC to? You can send me a valid email address or a valid Litecoin address.',
+                    keyboard: [[{ text: 'Cancel', callback_data: '/clear' }]]
                 }
-            } else return {
-                message: `You don't have any LTC to send silly! Click "Receive" to fund your Lite.IM wallet.`,
-                keyboard: [[
-                    {text: 'Receive', callback_data: '/receive'},
-                    {text: 'Cancel', callback_data: '/clear'}
-                ]]
+            } else
+                return {
+                    message: `You don't have any LTC to send silly! Click "Receive" to fund your Lite.IM wallet.`,
+                    keyboard: [
+                        [
+                            { text: 'Receive', callback_data: '/receive' },
+                            { text: 'Cancel', callback_data: '/clear' }
+                        ]
+                    ]
+                }
+        } else
+            return {
+                message:
+                    'I was unable to fetch your balance. Click "Cancel" to start over.',
+                keyboard: [[{ text: 'Cancel', callback_data: '/clear' }]]
             }
-        } else return {
-            message: 'I was unable to fetch your balance. Click "Cancel" to start over.',
-            keyboard: [[{ text: 'Cancel', callback_data: '/clear' }]]
-        }
     }
 
     async complete(value) {
@@ -201,7 +205,10 @@ class SendConvo {
                     return {
                         message: `Please enter the two factor authentication code you received via SMS.`,
                         keyboard: [
-                            { text: 'New Code', callback_data: '/requestNew2FACode amount' },
+                            {
+                                text: 'New Code',
+                                callback_data: '/requestNew2FACode amount'
+                            },
                             { text: 'Cancel', callback_data: '/help' }
                         ]
                     }
@@ -224,9 +231,9 @@ class SendConvo {
 
                 if (checkCode)
                     return {
-                        message: `If you want to send ${
-                            this.commandConvo.data().currency
-                        }${this.commandConvo.data().amount} to ${
+                        message: `If you want to send Ł${
+                            this.commandConvo.data().amount
+                        } to ${
                             this.commandConvo.data().to
                         } then please reply with your password so I can continue.`,
                         keyboard: [{ text: 'Cancel', callback_data: '/help' }]
@@ -240,7 +247,10 @@ class SendConvo {
                         message:
                             'You entered an invalid code, or the code we sent you has expired. Please try again.',
                         keyboard: [
-                            { text: 'New Code', callback_data: '/requestNew2FACode amount' },
+                            {
+                                text: 'New Code',
+                                callback_data: '/requestNew2FACode amount'
+                            },
                             { text: 'Cancel', callback_data: '/help' }
                         ]
                     }

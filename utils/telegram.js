@@ -20,7 +20,25 @@ class TelegramMessenger {
             .then(async success => {
                 // console.log("OUT:")
                 // console.log(success)
-                await new Firestore().setBotMessageID(this.fromID, success.message_id)
+                await new Firestore().setBotMessageID(
+                    this.fromID,
+                    success.message_id
+                )
+            })
+            .catch(failure => {
+                console.log(`Error sending message to ${this.chatID}`, failure)
+            })
+    }
+
+    async sendPhoto(url, caption, opts = {}) {
+        if (caption) opts.caption = caption
+        await this.bot
+            .sendPhoto(this.chatID, url, opts)
+            .then(async success => {
+                await new Firestore().setBotMessageID(
+                    this.fromID,
+                    success.message_id
+                )
             })
             .catch(failure => {
                 console.log(`Error sending message to ${this.chatID}`, failure)
@@ -42,19 +60,24 @@ class TelegramMessenger {
                 // console.log(success)
             })
             .catch(failure => {
-                console.log(`Error editing message to ${this.chatID}, message: ${messageID}`, failure)
+                console.log(
+                    `Error editing message to ${this.chatID}, message: ${messageID}`,
+                    failure
+                )
+                throw 'Could not edit message.'
             })
     }
 
     async deleteMessage(chatId, messageId) {
-        await this.bot.deleteMessage(chatId, messageId)
-            .then(() => {})
+        await this.bot.deleteMessage(chatId, messageId).then(() => {})
     }
 
     async answerCallback(text, alert = null, extra = null) {
         let callbackID = this.callbackID
         if (!callbackID) {
-            let telegramUserDoc = await new Firestore().fetchTelegramUser(this.fromID)
+            let telegramUserDoc = await new Firestore().fetchTelegramUser(
+                this.fromID
+            )
             callbackID = telegramUserDoc.data().callbackID
         }
 
@@ -64,39 +87,41 @@ class TelegramMessenger {
                 console.log(`Sent callback response to ${this.chatID}`)
             })
             .catch(failure => {
-                console.log(`Error sending callback response to ${this.chatID}`, failure)
+                console.log(
+                    `Error sending callback response to ${this.chatID}`,
+                    failure
+                )
             })
     }
 
-    inlineKeyboard(buttonLayout){
+    inlineKeyboard(buttonLayout) {
         if (buttonLayout) {
             if (buttonLayout === 'p1') {
                 buttonLayout = [
                     [
-                        {text: 'Send', callback_data: '/send'},
-                        {text: 'Receive', callback_data: '/receive'}
+                        { text: 'Send', callback_data: '/send' },
+                        { text: 'Receive', callback_data: '/receive' }
                     ],
                     [
-                        {text: 'Show Balance', callback_data: '/balance'},
-                        {text: 'Transactions', callback_data: '/transactions'}
+                        { text: 'Show Balance', callback_data: '/balance' },
+                        { text: 'Transactions', callback_data: '/transactions' }
                     ],
-                    [
-                        {text: 'More...', callback_data: '/moreInlineCommands'}
-                    ]
+                    [{ text: 'More...', callback_data: '/moreInlineCommands' }]
                 ]
             } else if (buttonLayout === 'p2') {
                 buttonLayout = [
                     [
-                        {text: 'Change Password', callback_data: '/changePassword'},
-                        {text: 'Change Email', callback_data: '/changeEmail'}
+                        {
+                            text: 'Change Password',
+                            callback_data: '/changePassword'
+                        },
+                        { text: 'Change Email', callback_data: '/changeEmail' }
                     ],
                     [
-                        {text: 'Export Wallet', callback_data: '/export'},
-                        {text: 'Start New Chat', callback_data: '/start'}
+                        { text: 'Export Wallet', callback_data: '/export' },
+                        { text: 'Start New Chat', callback_data: '/start' }
                     ],
-                    [
-                        {text: 'Back', callback_data: '/mainInlineCommands'}
-                    ]
+                    [{ text: 'Back', callback_data: '/mainInlineCommands' }]
                 ]
             }
 

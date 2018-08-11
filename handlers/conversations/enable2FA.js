@@ -2,7 +2,7 @@ const Firestore = require('../firestore_handler')
 const ActionHandler = require('../action_handler')
 const PhoneNumberValidator = require('../../utils/validators/phoneNumber')
 
-const steps = ['number']
+const steps = ['number', 'code']
 
 class SignupConvo {
     constructor(commandConvo) {
@@ -20,36 +20,16 @@ class SignupConvo {
     initialMessage() {
         return (
             `We'll need to setup two factor authentication to protect your account. Please enter your mobile ` +
-            `phone number in this format (without the brackets) followed by your password: +[country][number] \n` +
-            `Example: +17185555555 yourpassword`
+            `phone number in this format: \n+[country][number] \n\nExample: +17185555555`
         )
     }
 
     async complete(value) {
         let { telegramID } = this.commandConvo.data()
 
-        let params = value.split(/\s+/)
-        params = params.filter(param => param.length > 0)
-        if (params.length < 2)
-            return {
-                message:
-                    `Please enter the code you received to the number you provided, followed by your ` +
-                    `password, separated by a space. \nExample: 1111 yourpassword`,
-                keyboard: [
-                    { text: 'Change Phone Number', callback_data: '/enable2fa' }
-                ]
-            }
-
-        let code = params[0]
-        let password = params[1]
-
-        try {
-            let result = await new ActionHandler().check2FA(
-                telegramID,
-                code,
-                password
-            )
-            if (result) {
+        if (await new ActionHandler().getTelegramUserAndToken(telegramID, value)) {
+            try {
+                await this.firestore.updateIdOn2FA(telegramID)
                 await this.firestore.clearCommandPartial(telegramID)
                 return {
                     message:
@@ -57,20 +37,16 @@ class SignupConvo {
                         `sensitive information. Now what would you like to do?`,
                     keyboard: 'p1'
                 }
-            } else {
+            } catch (e) {
+                console.log(e)
                 return {
-                    message:
-                        `Please enter the correct two factor code that was sent to you, followed ` +
-                        `by your password, separated by a space.`,
-                    keyboard: [
-                        { text: 'Change Phone Number', callback_data: '/enable2fa' }
-                    ]
+                    message: 'Something went wrong, please try again.',
+                    keyboard: [[{ text: 'Try Again', callback_data: '/enable2fa' }]]
                 }
             }
-        } catch (e) {
-            console.log(e)
+        } else {
             return {
-                message: 'Something went wrong, please try again.',
+                message: 'Invalid password, please try again.',
                 keyboard: [[{ text: 'Try Again', callback_data: '/enable2fa' }]]
             }
         }
@@ -79,70 +55,87 @@ class SignupConvo {
     async afterMessageForStep(step, value) {
         switch (step) {
             case steps[0]:
-                const ConvoHandler = require('../convo_handler')
+                let number = value
+                if (number.charAt(0) === '+') number = number.substr(1)
 
-                let telegramID = this.commandConvo.data().telegramID
-                let params = value.split(/\s+/)
-                params = params.filter(param => param.length > 0)
-                if (params.length < 2) {
-                    await new ConvoHandler(telegramID).createNewCommandPartial(
-                        '/enable2fa'
-                    )
-                    return (
-                        `Please try again. Enter your mobile phone number in this format (without the brackets) ` +
-                        `followed by your password: +[country][number] \nExample: +17185555555 yourpassword`
-                    )
-                }
-
-                let number = params[0]
-                let password = params[1]
-
-                if (number.charAt(0) === '+') {
-                    number = number.substr(1)
-                }
                 let phoneNumberExists = await this.firestore.checkIfPhoneNumberExists(
                     number
                 )
                 if (phoneNumberExists) {
-                    await new ConvoHandler(telegramID).createNewCommandPartial(
-                        '/enable2fa'
+                    await this.firestore.unsetCommandPartial(
+                        this.commandConvo.id,
+                        step
                     )
                     return {
                         message:
                             `Sorry, but that phone number is already registered. Please try again ` +
-                            `with a different number.`,
+                            `with a different number in this format: \n+[country][number] \n\nExample: +17185555555`,
                         keyboard: [
-                            [
-                                {
-                                    text: 'Change Phone Number',
-                                    callback_data: '/changeNumber'
-                                }
-                            ]
+                            { text: 'Change Number', callback_data: '/enable2fa' }
                         ]
                     }
                 }
 
-                let result = await new ActionHandler().enable2FA(
-                    telegramID,
-                    number,
-                    password
+                let enable2FA = await new ActionHandler().enable2FA(
+                    this.commandConvo.data().telegramID,
+                    number
                 )
-
-                if (result) {
+                if (enable2FA)
+                    return {
+                        message: `Please enter the code you received at ${value}.`,
+                        keyboard: [
+                            { text: 'Change Number', callback_data: '/enable2fa' },
+                            {
+                                text: 'New Code',
+                                callback_data: '/requestNew2FACode number'
+                            }
+                        ]
+                    }
+                else {
+                    await this.firestore.unsetCommandPartial(
+                        this.commandConvo.id,
+                        step
+                    )
                     return {
                         message:
-                            `Please enter the code you received at the phone number you provided followed by ` +
-                            `your password, separated by a space. \nExample: 1111 yourpassword`,
+                            'Sorry, I had an issue with your request. Please try again.',
                         keyboard: [
-                            [
-                                {
-                                    text: 'Change Phone Number',
-                                    callback_data: '/changeNumber'
-                                }
-                            ]
+                            { text: 'Try Again', callback_data: '/enable2fa' }
                         ]
                     }
                 }
+
+            case steps[1]:
+                let code = value
+                let checkCode = await new ActionHandler().check2FA(
+                    this.commandConvo.data().telegramID,
+                    code,
+                    true
+                )
+
+                if (checkCode)
+                    return {
+                        message: `Please enter your password.`,
+                        keyboard: [{ text: 'Cancel', callback_data: '/enable2fa' }]
+                    }
+                else {
+                    await this.firestore.unsetCommandPartial(
+                        this.commandConvo.id,
+                        step
+                    )
+                    return {
+                        message:
+                            'You entered an invalid code, or the code we sent you has expired. Please try again.',
+                        keyboard: [
+                            { text: 'Change Number', callback_data: '/enable2fa' },
+                            {
+                                text: 'New Code',
+                                callback_data: '/requestNew2FACode number'
+                            }
+                        ]
+                    }
+                }
+
             default:
                 return {
                     message: 'Not sure what to do here.',
@@ -162,14 +155,16 @@ class SignupConvo {
 
     async setStep(step, value) {
         let validated = await this.validateStep(step, value)
-        if (!validated) throw `Please enter a valid ${step}`
-        let params = { [step]: step }
-        if (step !== 'number') params[step] = value //this is to prevent storing the password here
-
+        if (!validated) throw `Please enter a valid ${step}.`
+        let params = {}
+        params[step] = value
         try {
             await this.firestore.setCommandPartial(this.commandConvo.id, params)
-            return this.afterMessageForStep(step, value)
+            return await this.afterMessageForStep(step, value)
         } catch (e) {
+            console.log('ERROR: ', e)
+            if (e === 'Insufficient credits')
+                throw `Sorry, but I can only send 200 SMS messages to you per day. Please try again later.`
             throw `An error occurred, please try sending "${step}" again.`
         }
     }
@@ -177,8 +172,12 @@ class SignupConvo {
     async validateStep(step, value) {
         switch (step) {
             case steps[0]:
-                let params = value.split(/\s+/)
-                return new PhoneNumberValidator(params[0]).validate()
+                await this.firestore.unsetPartial2FA(
+                    this.commandConvo.data().telegramID
+                )
+                return new PhoneNumberValidator(value).validate()
+            case steps[1]:
+                return true
             default:
                 return false
         }

@@ -124,7 +124,8 @@ class SignupConvo {
                 let code = value
                 let checkCode = await new ActionHandler().check2FA(
                     this.commandConvo.data().telegramID,
-                    code
+                    code,
+                    true
                 )
 
                 if (checkCode)
