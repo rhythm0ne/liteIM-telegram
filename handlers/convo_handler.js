@@ -2,7 +2,7 @@ const Firestore = require('./firestore_handler')
 
 class ConvoHandler {
     constructor(telegramID) {
-        this.telegramID = telegramID
+        this.telegramID = telegramID.toString()
         this.firestore = new Firestore()
     }
 

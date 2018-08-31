@@ -1,22 +1,35 @@
 const Firestore = require('../firestore_handler')
 const ActionHandler = require('../action_handler')
+const Responder = require('../../utils/responder')
 
 const steps = ['type', 'code']
 
+const buttons = {
+    cancel: { text: 'Cancel', callback_data: '/clear' }
+}
+
 const keyboards = {
+    main: [[{ text: 'Main Menu', callback_data: '/help' }]],
+    cancel: [buttons.cancel],
     type: [
         [
-            { text: 'key', callback_data: 'key' },
-            { text: 'phrase', callback_data: 'phrase' }
+            { text: '🗝 key', callback_data: 'key' },
+            { text: '🔡 phrase', callback_data: 'phrase' }
         ],
-        [{ text: 'Cancel', callback_data: '/clear' }]
+        [buttons.cancel]
+    ],
+    code: [
+        { text: 'New Code', callback_data: '/requestNew2FACode type' },
+        buttons.cancel
     ]
 }
 
 class ExportConvo {
-    constructor(commandConvo) {
+    constructor(commandConvo, user) {
+        this.user = user
         this.commandConvo = commandConvo
         this.firestore = new Firestore()
+        this.responder = new Responder()
     }
 
     currentStep() {
@@ -28,86 +41,73 @@ class ExportConvo {
 
     initialMessage() {
         return {
-            message:
-                'I can help you export your wallet so you can import it into another wallet. Just remember to ' +
-                "keep this safe, and don't share it with anyone! Do you want me to show you your private key WIF, " +
-                'or your mnemonic seed phrase?',
-            keyboard: keyboards['type']
+            message: this.responder.response('request', 'export', 'type'),
+            keyboard: keyboards.type
         }
     }
 
     async complete(value) {
-        let { telegramID, type } = this.commandConvo.data()
+        let telegramID = this.commandConvo.id
+        let { type } = this.commandConvo.data()
         try {
-            let secret = await new ActionHandler().export(telegramID, type, value)
+            let secret = await new ActionHandler().export(this.user, type, value)
             await this.firestore.clearCommandPartial(telegramID)
             if (type === 'key')
                 return {
                     message: `<pre>${secret}</pre>`,
-                    keyboard: [[{ text: 'Main Menu', callback_data: '/help' }]]
+                    keyboard: keyboards.main
                 }
             else if (type === 'phrase')
                 return {
                     message: `<pre>${secret}</pre>`,
-                    keyboard: [[{ text: 'Main Menu', callback_data: '/help' }]]
+                    keyboard: keyboards.main
                 }
-        } catch (e) {
-            return e.toString()
+        } catch (err) {
+            return {
+                message: err,
+                keyboard: keyboards.cancel
+            }
         }
     }
 
     async afterMessageForStep(step, value) {
+        let telegramID = this.commandConvo.id
         switch (step) {
-            case steps[0]:
-                let result = await new ActionHandler().request2FA(
-                    this.commandConvo.data().telegramID
-                )
-                if (result)
+            case steps[0]: //send 2fa code, and prompt user to enter it
+                try {
+                    await new ActionHandler().request2FA(this.user.id)
                     return {
-                        message: `Please enter the two factor authentication code you received via SMS.`,
-                        keyboard: [
-                            { text: 'New Code', callback_data: '/requestNew2FACode type' },
-                            { text: 'Cancel', callback_data: '/help' }
-                        ]
+                        message: this.responder.response('request', 'export', 'code'),
+                        keyboard: keyboards.code
                     }
-                else {
-                    await this.firestore.unsetCommandPartial(
-                        this.commandConvo.id,
-                        step
-                    )
+                } catch (err) {
+                    await this.clearStep(step)
                     return {
-                        message:
-                            'Sorry, I had an issue with your request. Please try again.',
-                        keyboard: [{ text: 'Cancel', callback_data: '/help' }]
+                        message: err,
+                        keyboard: keyboards.cancel
                     }
                 }
-            case steps[1]:
-                let checkCode = await new ActionHandler().check2FA(
-                    this.commandConvo.data().telegramID,
-                    value
-                )
 
-                if (checkCode)
+            case steps[1]: //check 2fa code, and prompt user to enter password
+                try {
+                    await new ActionHandler().check2FA(telegramID, value, this.user.id)
                     return {
-                        message: `Please reply with your password and I'll get that for you right away.`,
-                        keyboard: [{ text: 'Cancel', callback_data: '/help' }]
+                        message: this.responder.response('request', 'export', 'password'),
+                        keyboard: keyboards.cancel
                     }
-                else {
-                    await this.firestore.unsetCommandPartial(
-                        this.commandConvo.id,
-                        step
-                    )
+                } catch (err) {
+                    await this.clearStep(step)
                     return {
-                        message:
-                            'You entered an invalid code, or the code we sent you has expired. Please try again.',
-                        keyboard: [
-                            { text: 'New Code', callback_data: '/requestNew2FACode type' },
-                            { text: 'Cancel', callback_data: '/help' }
-                            ]
+                        message: err,
+                        keyboard: keyboards.code
                     }
                 }
+
             default:
-                return 'Not sure what to do here. Reply /clear to cancel the current command.'
+                return {
+                    message: this.responder.response('failure', 'conversation', 'unexpectedInput'),
+                    keyboard: keyboards.cancel
+                }
         }
     }
 
@@ -122,18 +122,14 @@ class ExportConvo {
 
     async setStep(step, value) {
         let validated = await this.validateStep(step, value)
-        if (!validated)
-            throw {
-                message: `Please enter a valid ${step}.`,
-                keyboard: keyboards[step]
-            }
+        if (!validated) throw this.responder.response('failure', 'conversation', 'invalidStep', { step })
         let params = {}
         params[step] = value
         try {
             await this.firestore.setCommandPartial(this.commandConvo.id, params)
             return this.afterMessageForStep(step, value)
-        } catch (e) {
-            throw `An error occurred, please try sending "${step}" again.`
+        } catch (err) {
+            throw err
         }
     }
 
@@ -146,6 +142,13 @@ class ExportConvo {
             default:
                 return false
         }
+    }
+
+    async clearStep(step) {
+        await this.firestore.unsetCommandPartial(
+            this.commandConvo.id,
+            step
+        )
     }
 }
 

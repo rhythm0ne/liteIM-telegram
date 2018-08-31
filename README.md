@@ -57,3 +57,12 @@ To learn more about Lite.IM, visit the [project website](https://www.lite.im/), 
 The Lite.IM Telegram bot can be found at [@LiteIM_bot](http://telegram.me/LiteIM_bot), while the Zulu Republic Telegram community can be found [here](https://t.me/ztxrepublic).
 
 Follow Zulu Republic on Twitter at [@ztxrepublic](www.twitter.com/ztxrepublic).
+
+## 9. What's New In This Version
+
+- Implement use of language files for multilingual support and dynamic responses
+- Implement dynamic usage of emojis
+- Switch Plivo for Twilio as SMS provider
+- Update phone number validator to address issues with validating German phone numbers
+- Reorganize storage of transactions for better efficiency
+- Miscellaneous improvements and fixes

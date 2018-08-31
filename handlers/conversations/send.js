@@ -1,21 +1,42 @@
 const Firestore = require('../firestore_handler')
 const ActionHandler = require('../action_handler')
+const Responder = require('../../utils/responder')
 const EmailWalletValidator = require('../../utils/validators/email_wallet')
 const NumberValidator = require('../../utils/validators/number')
 
 const steps = ['to', 'currency', 'amount', 'code']
 
+const buttons = {
+    cancel: { text: 'Cancel', callback_data: '/clear' }
+}
+
 const keyboards = {
     currency: [
         [{ text: '$', callback_data: '$' }, { text: 'Ł', callback_data: 'Ł' }],
-        [{ text: 'Cancel', callback_data: '/clear' }]
-    ]
+        [buttons.cancel]
+    ],
+    cancel: [buttons.cancel],
+    receive: [[
+        { text: 'Receive', callback_data: '/receive' },
+        buttons.cancel
+    ]],
+    amount: [[
+        { text: 'Send All', callback_data: 'all' },
+        buttons.cancel
+    ]],
+    code: [
+        { text: 'New Code', callback_data: '/requestNew2FACode amount' },
+        buttons.cancel
+    ],
+    main: { text: 'Main Menu', callback_data: '/help' }
 }
 
 class SendConvo {
-    constructor(commandConvo, telegramUsername) {
+    constructor(commandConvo, user, telegramUsername) {
+        this.user = user
         this.commandConvo = commandConvo
         this.firestore = new Firestore()
+        this.responder = new Responder()
         this.telegramUsername = telegramUsername
     }
 
@@ -26,144 +47,107 @@ class SendConvo {
         }
     }
 
-    async initialMessage(telegramID) {
-        let getBalance = await new ActionHandler().balance(telegramID)
-        if (getBalance && getBalance.balance) {
-            if (Number(getBalance.balance) > 0) {
+    async initialMessage(userID) {
+        let balance = await new ActionHandler().balance(userID)
+        if (typeof balance !== undefined) {
+            if (Number(balance) > 0) {
                 return {
-                    message:
-                        'Who would you like to send LTC to? You can send me a valid email address or a valid Litecoin address.',
-                    keyboard: [[{ text: 'Cancel', callback_data: '/clear' }]]
+                    message: this.responder.response('request', 'send', 'to'),
+                    keyboard: keyboards.cancel
                 }
             } else
                 return {
-                    message: `You don't have any LTC to send silly! Click "Receive" to fund your Lite.IM wallet.`,
-                    keyboard: [
-                        [
-                            { text: 'Receive', callback_data: '/receive' },
-                            { text: 'Cancel', callback_data: '/clear' }
-                        ]
-                    ]
+                    message: this.responder.response('failure', 'send', 'zeroBalance'),
+                    keyboard: keyboards.receive
                 }
         } else
             return {
-                message:
-                    'I was unable to fetch your balance. Click "Cancel" to start over.',
-                keyboard: [[{ text: 'Cancel', callback_data: '/clear' }]]
+                message: this.responder.response('failure', 'send', 'fetchBalance'),
+                keyboard: keyboards.cancel
             }
     }
 
     async complete(value) {
-        let { to, amount, telegramID } = this.commandConvo.data()
+        let telegramID = this.commandConvo.id
+        let { to, amount } = this.commandConvo.data()
 
         try {
-            let data = await new ActionHandler().send(to, amount, value, telegramID)
+            let data = await new ActionHandler().send(to, amount, value, this.user)
             let { txid, toUser } = data
 
-            if (txid) {
-                let subdomain =
-                    process.env.STAGE === 'production' ||
-                    process.env.STAGE === 'staging'
-                        ? 'insight'
-                        : 'testnet'
+            let subdomain =
+                process.env.STAGE === 'production' ||
+                process.env.STAGE === 'staging'
+                    ? 'insight'
+                    : 'testnet'
 
-                let keyboardLayout = [
-                    [
-                        {
-                            text: txid,
-                            url: `https://${subdomain}.litecore.io/tx/${txid}/`
-                        },
-                        { text: 'Main Menu', callback_data: '/help' }
-                    ]
-                ]
+            let keyboardLayout = [
+                {
+                    text: txid,
+                    url: `https://${subdomain}.litecore.io/tx/${txid}/`
+                },
+                keyboards.main
+            ]
 
-                if (toUser) {
-                    let TelegramMessenger = require('../../utils/telegram')
-                    let notifier = new TelegramMessenger({
-                        chatID: toUser,
-                        fromID: toUser
-                    })
+            if (toUser) {
+                let TelegramMessenger = require('../../utils/telegram')
+                let notifier = new TelegramMessenger({
+                    chatID: toUser,
+                    fromID: toUser
+                })
 
-                    try {
-                        let messageIdToDelete = await this.firestore.getBotMessageID(
-                            toUser
+                try {
+                    let messageIdToDelete = await this.firestore.getBotMessageID(toUser)
+                    if (messageIdToDelete.messageID)
+                        await notifier.deleteMessage(
+                            toUser,
+                            messageIdToDelete.messageID
                         )
-                        if (messageIdToDelete.messageID)
-                            await notifier.deleteMessage(
-                                toUser,
-                                messageIdToDelete.messageID
-                            )
-                    } catch (err) {
-                        console.log(`Could not delete prior message. Error: ${err}`)
-                    }
-
-                    notifier.sendMessage(
-                        `You just received Ł${amount} from ${this.telegramUsername}`,
-                        notifier.inlineKeyboard(keyboardLayout)
-                    )
+                } catch (err) {
+                    console.log(`Could not delete prior message for tx notification. Error: ${err}`)
                 }
 
-                await this.firestore.clearCommandPartial(telegramID)
-
-                return {
-                    message:
-                        `Transaction sent! Click below to see the transaction details. Please remember ` +
-                        `to clear this conversation to remove sensitive information.`,
-                    keyboard: keyboardLayout
-                }
-            } else {
-                return {
-                    message: `There was a problem with your transaction, please try again.`,
-                    keyboard: [[{ text: 'Cancel', callback_data: '/clear' }]]
-                }
+                await notifier.sendMessage(
+                    this.responder.response('success', 'send', 'recipient', { amount, username: this.telegramUsername }),
+                    notifier.inlineKeyboard(keyboardLayout)
+                )
             }
-        } catch (e) {
-            throw e.toString()
+
+            await this.firestore.clearCommandPartial(telegramID)
+            return {
+                message: this.responder.response('success', 'send', 'sender'),
+                keyboard: keyboardLayout
+            }
+        } catch (err) {
+            return {
+                message: err,
+                keyboard: keyboards.cancel
+            }
         }
     }
 
     async afterMessageForStep(step, value) {
+        let telegramID = this.commandConvo.id
         switch (step) {
             case steps[0]:
                 return {
-                    message: `Would you prefer to express the amount in USD ($) or LTC (Ł)?`,
-                    keyboard: keyboards['currency']
+                    message: this.responder.response('request', 'send', 'currency'),
+                    keyboard: keyboards.currency
                 }
             case steps[1]:
+                let to = this.commandConvo.data().to
+                let currency = value
                 return {
-                    message:
-                        `How much do you want to send to ${
-                            this.commandConvo.data().to
-                        }, expressed in ${value}? \n` + `Example: 1.50`,
-                    keyboard: [
-                        [
-                            { text: 'Send All', callback_data: 'all' },
-                            { text: 'Cancel', callback_data: '/clear' }
-                        ]
-                    ]
+                    message: this.responder.response('request', 'send', 'amount', { to, currency }),
+                    keyboard: keyboards.amount
                 }
             case steps[2]:
                 let amount = value
                 if (amount === 'all') {
-                    let getBalance = await new ActionHandler().balance(
-                        this.commandConvo.data().telegramID
-                    )
-                    if (getBalance && getBalance.balance) {
-                        let balance = Number(getBalance.balance)
-                        let unconfirmedBalance = Number(
-                            getBalance.unconfirmedBalance
-                        )
-
+                    let getBalance = await new ActionHandler().balance(this.user.id)
+                    if (getBalance) {
+                        let balance = Number(getBalance)
                         amount = balance
-                        if (unconfirmedBalance > 0 && unconfirmedBalance < balance)
-                            amount = unconfirmedBalance
-
-                        let params = {}
-                        params['amount'] = amount
-                        await this.firestore.setCommandPartial(
-                            this.commandConvo.id,
-                            params
-                        )
 
                         if (this.commandConvo.data().currency === '$') {
                             try {
@@ -175,9 +159,8 @@ class SendConvo {
                         }
                     } else
                         return {
-                            message:
-                                'I was unable to fetch your balance. Click "Cancel" to start over.',
-                            keyboard: [[{ text: 'Cancel', callback_data: '/clear' }]]
+                            message: this.responder.response('failure', 'send', 'fetchBalance'),
+                            keyboard: keyboards.cancel
                         }
                 }
 
@@ -198,65 +181,48 @@ class SendConvo {
                     }
                 }
 
-                let result = await new ActionHandler().request2FA(
-                    this.commandConvo.data().telegramID
-                )
-                if (result)
+                try {
+                    await new ActionHandler().request2FA(this.user.id)
+
+                    let message = amount === 'all' ?
+                        this.responder.response('request', 'sendAll', 'code') :
+                        this.responder.response('request', 'send', 'code')
+
                     return {
-                        message: `Please enter the two factor authentication code you received via SMS.`,
-                        keyboard: [
-                            {
-                                text: 'New Code',
-                                callback_data: '/requestNew2FACode amount'
-                            },
-                            { text: 'Cancel', callback_data: '/help' }
-                        ]
+                        message,
+                        keyboard: keyboards.code
                     }
-                else {
-                    await this.firestore.unsetCommandPartial(
-                        this.commandConvo.id,
-                        step
-                    )
+                } catch (err) {
+                    await this.clearStep(step)
                     return {
-                        message:
-                            'Sorry, I had an issue with your request. Please try again.',
-                        keyboard: [{ text: 'Cancel', callback_data: '/help' }]
+                        message: err,
+                        keyboard: keyboards.cancel
                     }
                 }
             case steps[3]:
-                let checkCode = await new ActionHandler().check2FA(
-                    this.commandConvo.data().telegramID,
-                    value
-                )
+                try {
+                    await new ActionHandler().check2FA(telegramID, value, this.user.id)
+                    let amount = this.commandConvo.data().amount
+                    let to = this.commandConvo.data().to
 
-                if (checkCode)
+                    if (amount !== 'all') amount = `Ł${amount}`
+
                     return {
-                        message: `If you want to send Ł${
-                            this.commandConvo.data().amount
-                        } to ${
-                            this.commandConvo.data().to
-                        } then please reply with your password so I can continue.`,
-                        keyboard: [{ text: 'Cancel', callback_data: '/help' }]
+                        message: this.responder.response('request', 'send', 'password', { amount, to }),
+                        keyboard: keyboards.cancel
                     }
-                else {
-                    await this.firestore.unsetCommandPartial(
-                        this.commandConvo.id,
-                        step
-                    )
+                } catch (err) {
+                    await this.clearStep(step)
                     return {
-                        message:
-                            'You entered an invalid code, or the code we sent you has expired. Please try again.',
-                        keyboard: [
-                            {
-                                text: 'New Code',
-                                callback_data: '/requestNew2FACode amount'
-                            },
-                            { text: 'Cancel', callback_data: '/help' }
-                        ]
+                        message: err,
+                        keyboard: keyboards.code
                     }
                 }
             default:
-                throw 'Not sure what to do here. Click "Cancel" to start over.'
+                return {
+                    message: this.responder.response('failure', 'conversation', 'unexpectedInput'),
+                    keyboard: keyboards.cancel
+                }
         }
     }
 
@@ -273,7 +239,7 @@ class SendConvo {
         let validated = await this.validateStep(step, value)
         if (!validated)
             throw {
-                message: `Please enter a valid ${step}.`,
+                message: this.responder.response('failure', 'conversation', 'invalidStep', { step }),
                 keyboard: keyboards[step]
             }
         let params = {}
@@ -281,9 +247,8 @@ class SendConvo {
         try {
             await this.firestore.setCommandPartial(this.commandConvo.id, params)
             return this.afterMessageForStep(step, value)
-        } catch (e) {
-            console.log(e)
-            throw `An error occurred, please try sending "${step}" again.`
+        } catch (err) {
+            throw err
         }
     }
 
@@ -305,6 +270,13 @@ class SendConvo {
             default:
                 return false
         }
+    }
+
+    async clearStep(step) {
+        await this.firestore.unsetCommandPartial(
+            this.commandConvo.id,
+            step
+        )
     }
 }
 

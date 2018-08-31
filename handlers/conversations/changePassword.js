@@ -1,12 +1,27 @@
 const Firestore = require('../firestore_handler')
 const ActionHandler = require('../action_handler')
+const Responder = require('../../utils/responder')
 
 const steps = ['code']
 
+const buttons = {
+    cancel: { text: 'Cancel', callback_data: '/clear' }
+}
+
+const keyboards = {
+    cancel: [buttons.cancel],
+    code: [
+        { text: 'New Code', callback_data: '/changePassword' },
+        buttons.cancel
+    ]
+}
+
 class ChangePasswordConvo {
-    constructor(commandConvo) {
+    constructor(commandConvo, user) {
+        this.user = user
         this.commandConvo = commandConvo
         this.firestore = new Firestore()
+        this.responder = new Responder()
     }
 
     currentStep() {
@@ -16,87 +31,75 @@ class ChangePasswordConvo {
         }
     }
 
-    async initialMessage(telegramID) {
-        let result = await new ActionHandler().request2FA(telegramID)
-        if (result) {
+    async initialMessage(userID) {
+        try {
+            await new ActionHandler().request2FA(userID)
             return {
-                message: `I see you'd like to change your password. Please enter the security code you just received via SMS.`,
-                keyboard: [
-                    {text: 'New Code', callback_data: '/requestNew2FACode'},
-                    {text: 'Cancel', callback_data: '/clear'}
-                ]
+                message: this.responder.response('request', 'changePassword', 'code'),
+                keyboard: keyboards.code
+            }
+        } catch (err) {
+            return {
+                message: err,
+                keyboard: keyboards.cancel
             }
         }
     }
 
     async complete(value) {
-        let { telegramID } = this.commandConvo.data()
+        let telegramID = this.commandConvo.id
         try {
             let params = value.split(/\s+/)
             params = params.filter(param => param.length > 0)
             if (params.length < 2)
                 return {
-                    message:
-                        `Please enter your current password followed by you new password, ` +
-                        `each separated by a space, or click "Cancel". \n\nExample: yourPassword yourNewPassword`,
-                    keyboard: [{ text: 'Cancel', callback_data: '/clear' }]
+                    message: this.responder.response('request', 'changePassword', 'password'),
+                    keyboard: keyboards.cancel
                 }
 
             let currentPassword = params[0]
             let newPassword = params[1]
 
             await new ActionHandler().changePassword(
-                telegramID,
+                this.user,
                 currentPassword,
                 newPassword
             )
             await this.firestore.clearCommandPartial(telegramID)
             return {
-                message:
-                    `You successfully changed your password to "${newPassword}". Please remember your ` +
-                    `new password, but keep it safe from others, and please remember to clear this conversation to ` +
-                    `remove sensitive information.`,
+                message: this.responder.response('success', 'changePassword', null, { newPassword }),
                 keyboard: 'p1'
             }
-        } catch (e) {
-            return e.toString()
+        } catch (err) {
+            return {
+                message: err,
+                keyboard: keyboards.cancel
+            }
         }
     }
 
     async afterMessageForStep(step, value) {
+        let telegramID = this.commandConvo.id
         switch (step) {
             case steps[0]:
-                let checkCode = await new ActionHandler().check2FA(
-                    this.commandConvo.data().telegramID,
-                    value
-                )
-
-                if (checkCode)
+                try {
+                    await new ActionHandler().check2FA(telegramID, value, this.user.id)
                     return {
-                        message:
-                            `Please enter your current password followed by you new password, ` +
-                            `each separated by a space, or click "Cancel". \n\nExample: yourPassword yourNewPassword`,
-                        keyboard: [{ text: 'Cancel', callback_data: '/clear' }]
+                        message: this.responder.response('request', 'changePassword', 'password'),
+                        keyboard: keyboards.cancel
                     }
-                else {
-                    await this.firestore.unsetCommandPartial(
-                        this.commandConvo.id,
-                        step
-                    )
+                } catch (err) {
+                    await this.clearStep(step)
                     return {
-                        message:
-                            'You entered an invalid code, or the code we sent you has expired. Please try again.',
-                        keyboard: [
-                            { text: 'New Code', callback_data: '/requestNew2FACode' },
-                            { text: 'Cancel', callback_data: '/help' }
-                        ]
+                        message: err,
+                        keyboard: keyboards.code
                     }
                 }
+
             default:
                 return {
-                    message:
-                        'Not sure what to do here. Click "Cancel" to cancel the current command.',
-                    keyboard: [{ text: 'Cancel', callback_data: '/clear' }]
+                    message: this.responder.response('failure', 'conversation', 'unexpectedInput'),
+                    keyboard: keyboards.cancel
                 }
         }
     }
@@ -112,14 +115,14 @@ class ChangePasswordConvo {
 
     async setStep(step, value) {
         let validated = await this.validateStep(step, value)
-        if (!validated) throw `Please enter a valid ${step}`
+        if (!validated) throw this.responder.response('failure', 'conversation', 'invalidStep', { step })
         let params = {}
         params[step] = value
         try {
             await this.firestore.setCommandPartial(this.commandConvo.id, params)
             return this.afterMessageForStep(step, value)
-        } catch (e) {
-            throw `An error occurred, please try sending "${step}" again.`
+        } catch (err) {
+            throw err
         }
     }
 
@@ -130,6 +133,13 @@ class ChangePasswordConvo {
             default:
                 return false
         }
+    }
+
+    async clearStep(step) {
+        await this.firestore.unsetCommandPartial(
+            this.commandConvo.id,
+            step
+        )
     }
 }
 

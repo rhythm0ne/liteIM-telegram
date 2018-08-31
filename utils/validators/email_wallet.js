@@ -1,9 +1,11 @@
 const Firestore = require('../../handlers/firestore_handler')
+const Responder = require('../responder')
 
 class EmailWalletValidator {
     constructor(email) {
         this.email = email
         this.firstore = new Firestore()
+        this.responder = new Responder()
     }
 
     async validate() {
@@ -11,8 +13,8 @@ class EmailWalletValidator {
         try {
             await this.firstore.fetchWalletByEmail(this.email)
             return true
-        } catch (e) {
-            return false
+        } catch (_) {
+            throw this.responder.response('failure', 'send', 'emailNotRegistered', { email: this.email })
         }
     }
 }

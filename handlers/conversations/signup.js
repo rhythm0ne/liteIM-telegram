@@ -1,13 +1,29 @@
 const Firestore = require('../firestore_handler')
 const ActionHandler = require('../action_handler')
 const PhoneNumberValidator = require('../../utils/validators/phoneNumber')
+const Responder = require('../../utils/responder')
 
 const steps = ['email', 'phone', 'code']
+
+const buttons = {
+    cancel: { text: 'Cancel', callback_data: '/signup' }
+}
+
+const keyboards = {
+    cancel: [buttons.cancel],
+    begin: [{ text: 'Lets Begin!', callback_data: '/help' }],
+    code: [
+        { text: 'New Code', callback_data: '/requestNew2FACode phone' },
+        buttons.cancel
+    ],
+    retry: [[{ text: 'Try Again', callback_data: '/signup' }]]
+}
 
 class SignupConvo {
     constructor(commandConvo) {
         this.commandConvo = commandConvo
         this.firestore = new Firestore()
+        this.responder = new Responder()
     }
 
     currentStep() {
@@ -18,143 +34,102 @@ class SignupConvo {
     }
 
     initialMessage() {
-        return 'What is your primary email address?'
+        return {
+            message: this.responder.response('request', 'signup', 'email'),
+            keyboard: keyboards.cancel
+        }
     }
 
     async complete(value) {
-        let { telegramID, email } = this.commandConvo.data()
+        let telegramID = this.commandConvo.id
+        let { email } = this.commandConvo.data()
         try {
             let address = await new ActionHandler().signup(telegramID, email, value)
-            if (address) {
-                await this.firestore.updateIdOn2FA(telegramID)
-                await this.firestore.clearCommandPartial(telegramID)
-                return {
-                    message: `You successfully signed up and your wallet address is: <pre>${address}</pre>`,
-                    keyboard: [{ text: 'Lets Begin!', callback_data: '/help' }]
-                }
-            } else {
-                await this.firestore.clearCommandPartial(telegramID)
-                return {
-                    message: `There was a problem signing you up. Please try again.`,
-                    keyboard: [{ text: 'Try Again', callback_data: '/start' }]
-                }
-            }
-        } catch (e) {
+            await this.firestore.updateIdOn2FA(telegramID)
+            await this.firestore.clearCommandPartial(telegramID)
             return {
-                message: e.toString(),
-                keyboard: [{ text: 'Cancel', callback_data: '/start' }]
+                message: this.responder.response('success', 'signup', null, { address }),
+                keyboard: keyboards.begin
+            }
+        } catch (err) {
+            return {
+                message: err,
+                keyboard: keyboards.retry
             }
         }
     }
 
     async afterMessageForStep(step, value) {
+        let telegramID = this.commandConvo.id
         switch (step) {
             case steps[0]:
-                let emailExists = false
                 try {
-                    await this.firestore.getUserByEmail(value)
-                    emailExists = true
-                } catch (e) {} //ignore this, it just means the email address does not exist, which is what we want
-
-                if (emailExists) {
-                    await this.firestore.unsetCommandPartial(
-                        this.commandConvo.id,
-                        step
-                    )
-                    return {
-                        message: `Sorry, but that email address is already registered. Please use a different one.`,
-                        keyboard: [{ text: 'Cancel', callback_data: '/start' }]
+                    let emailExists = await this.firestore.checkIfEmailExists(value)
+                    if (!emailExists){
+                        return {
+                            message: this.responder.response('request', 'signup', 'phone'),
+                            keyboard: keyboards.cancel
+                        }
+                    } else {
+                        //TODO: allow user to link this telegramID to the existing email address
+                        await this.clearStep(step)
+                        return {
+                            message: this.responder.response('failure', 'firestore', 'emailExists'),
+                            keyboard: keyboards.cancel
+                        }
                     }
-                }
-
-                return {
-                    message: `Please enter your mobile phone number in this format: \n+[country][number] \n\nExample: +17185555555`,
-                    keyboard: [{ text: 'Cancel', callback_data: '/start' }]
+                } catch (err) {
+                    await this.clearStep(step)
+                    return {
+                        message: err,
+                        keyboard: keyboards.cancel
+                    }
                 }
 
             case steps[1]:
-                let number = value
-                if (number.charAt(0) === '+') number = number.substr(1)
-
-                let phoneNumberExists = await this.firestore.checkIfPhoneNumberExists(
-                    number
-                )
-                if (phoneNumberExists) {
-                    await this.firestore.unsetCommandPartial(
-                        this.commandConvo.id,
-                        step
-                    )
-                    return {
-                        message:
-                            `Sorry, but that phone number is already registered. Please try again ` +
-                            `with a different number in this format: \n+[country][number] \n\nExample: +17185555555`,
-                        keyboard: [{ text: 'Cancel', callback_data: '/start' }]
+                try {
+                    let number = (value.charAt(0) === '+') ? value.substr(1) : value
+                    let numberExists = await this.firestore.checkIfPhoneNumberExists(number)
+                    if (!numberExists) {
+                        await new ActionHandler().enable2FA(telegramID, number)
+                        return {
+                            message: this.responder.response('request', 'signup', 'code', {number}),
+                            keyboard: keyboards.code
+                        }
+                    } else {
+                        await this.clearStep(step)
+                        return {
+                            message: this.responder.response('failure', 'twoFactor', 'numberInUse'),
+                            keyboard: keyboards.cancel
+                        }
                     }
-                }
-
-                let enable2FA = await new ActionHandler().enable2FA(
-                    this.commandConvo.data().telegramID,
-                    number
-                )
-
-                if (enable2FA)
+                } catch (err) {
+                    await this.clearStep(step)
                     return {
-                        message: `Please enter the code you received at ${value}.`,
-                        keyboard: [
-                            {
-                                text: 'New Code',
-                                callback_data: '/requestNew2FACode phone'
-                            },
-                            { text: 'Cancel', callback_data: '/start' }
-                        ]
-                    }
-                else {
-                    await this.firestore.unsetCommandPartial(
-                        this.commandConvo.id,
-                        step
-                    )
-                    return {
-                        message:
-                            'Sorry, I had an issue with your request. Please try again.',
-                        keyboard: [{ text: 'Cancel', callback_data: '/start' }]
+                        message: err,
+                        keyboard: keyboards.cancel
                     }
                 }
 
             case steps[2]:
-                let code = value
-                let checkCode = await new ActionHandler().check2FA(
-                    this.commandConvo.data().telegramID,
-                    code,
-                    true
-                )
-
-                if (checkCode)
+                try {
+                    await new ActionHandler().check2FA(telegramID, value)
                     return {
-                        message: `Please enter a safe password for your Lite.IM account.`,
-                        keyboard: [{ text: 'Cancel', callback_data: '/start' }]
+                        message: this.responder.response('request', 'signup', 'password'),
+                        keyboard: keyboards.cancel
                     }
-                else {
-                    await this.firestore.unsetCommandPartial(
-                        this.commandConvo.id,
-                        step
-                    )
+                } catch (err) {
+                    await this.clearStep(step)
                     return {
-                        message:
-                            'You entered an invalid code, or the code we sent you has expired. Please try again.',
-                        keyboard: [
-                            {
-                                text: 'New Code',
-                                callback_data: '/requestNew2FACode phone'
-                            },
-                            { text: 'Cancel', callback_data: '/start' }
-                        ]
+                        message: err,
+                        keyboard: keyboards.code
                     }
                 }
 
             default:
                 return {
-                    message: 'Not sure what to do here. Click Cancel to try again.',
-                    keyboard: [{ text: 'Cancel', callback_data: '/start' }]
+                    message: this.responder.response('failure', 'conversation', 'unexpectedInput'),
+                    keyboard: keyboards.cancel
                 }
         }
     }
@@ -170,35 +145,44 @@ class SignupConvo {
 
     async setStep(step, value) {
         let validated = await this.validateStep(step, value)
-        if (!validated) throw `Please enter a valid ${step}.`
+        if (!validated) throw {
+            message: this.responder.response('failure', 'conversation', 'invalidStep', {step}),
+            keyboard: keyboards.cancel
+        }
         let params = {}
         params[step] = value
         try {
             await this.firestore.setCommandPartial(this.commandConvo.id, params)
             return await this.afterMessageForStep(step, value)
-        } catch (e) {
-            console.log('ERROR: ', e)
-            throw `An error occurred, please try sending "${step}" again.`
+        } catch (err) {
+            throw {
+                message: err,
+                keyboard: keyboards.cancel
+            }
         }
     }
 
     async validateStep(step, value) {
+        let telegramID = this.commandConvo.id
         switch (step) {
             case steps[0]:
-                await this.firestore.unsetPartial2FA(
-                    this.commandConvo.data().telegramID
-                )
+                await this.firestore.unsetPartial2FA(telegramID)
                 return new ActionHandler().isEmail(value)
             case steps[1]:
-                await this.firestore.unsetPartial2FA(
-                    this.commandConvo.data().telegramID
-                )
+                await this.firestore.unsetPartial2FA(telegramID)
                 return new PhoneNumberValidator(value).validate()
             case steps[2]:
                 return true
             default:
                 return false
         }
+    }
+
+    async clearStep(step) {
+        await this.firestore.unsetCommandPartial(
+            this.commandConvo.id,
+            step
+        )
     }
 }
 

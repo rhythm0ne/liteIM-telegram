@@ -99,29 +99,29 @@ class TelegramMessenger {
             if (buttonLayout === 'p1') {
                 buttonLayout = [
                     [
-                        { text: 'Send', callback_data: '/send' },
-                        { text: 'Receive', callback_data: '/receive' }
+                        { text: '💸 Send', callback_data: '/send' },
+                        { text: '💰 Receive', callback_data: '/receive' }
                     ],
                     [
-                        { text: 'Show Balance', callback_data: '/balance' },
-                        { text: 'Transactions', callback_data: '/transactions' }
+                        { text: '🏦 Balance', callback_data: '/balance' },
+                        { text: '📑 Transactions', callback_data: '/transactions' }
                     ],
-                    [{ text: 'More...', callback_data: '/moreInlineCommands' }]
+                    [{ text: '➡️ More...', callback_data: '/moreInlineCommands' }]
                 ]
             } else if (buttonLayout === 'p2') {
                 buttonLayout = [
                     [
                         {
-                            text: 'Change Password',
+                            text: '🔒 Change Password',
                             callback_data: '/changePassword'
                         },
-                        { text: 'Change Email', callback_data: '/changeEmail' }
+                        { text: '📧 Change Email', callback_data: '/changeEmail' }
                     ],
                     [
-                        { text: 'Export Wallet', callback_data: '/export' },
-                        { text: 'Start New Chat', callback_data: '/start' }
+                        { text: '👛 Export Wallet', callback_data: '/export' },
+                        { text: '🔙 Back', callback_data: '/mainInlineCommands' }
                     ],
-                    [{ text: 'Back', callback_data: '/mainInlineCommands' }]
+
                 ]
             }
 

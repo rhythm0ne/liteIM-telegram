@@ -1,4 +1,5 @@
 const TelegramMessenger = require('../utils/telegram')
+const Responder = require('../utils/responder')
 const ConvoHandler = require('./convo_handler')
 const Firestore = require('./firestore_handler')
 const ActionHandler = require('./action_handler')
@@ -8,6 +9,29 @@ const ExportConvo = require('./conversations/export')
 const Enable2FAConvo = require('./conversations/enable2FA')
 const ChangeEmailConvo = require('./conversations/changeEmail')
 const ChangePasswordConvo = require('./conversations/changePassword')
+
+const responder = new Responder()
+
+const buttons = {
+    cancel: { text: 'Cancel', callback_data: '/help' },
+    back: { text: 'Back', callback_data: '/help' }
+}
+
+const keyboards = {
+    register: [{ text: 'Register', callback_data: '/signup' }],
+    receive: [
+        [
+            { text: 'Wallet', callback_data: '/receive wallet' },
+            { text: 'QR', callback_data: '/receive qr' },
+            { text: 'Email', callback_data: '/receive email' }
+        ],
+        [buttons.cancel]
+    ],
+    enable2fa: [{ text: 'Enable Two Factor Auth', callback_data: '/enable2fa' }],
+    start: [[{ text: 'Cancel', callback_data: '/start' }]],
+    cancel: [buttons.cancel],
+    clear: [{ text: 'Cancel', callback_data: '/clear' }]
+}
 
 const parseCommand = async webhookData => {
     // console.log("IN:")
@@ -37,55 +61,66 @@ const parseCommand = async webhookData => {
         fromID: telegramID
     })
 
-    let parsedMessage = parseParams(messageContent)
-    if (!parsedMessage) return doConversation(webhookData)
-
     let actionHandler = new ActionHandler()
-    await actionHandler.sync(telegramID).catch(failure => {
-        console.log(`sync: ${failure}`) //ignore sync failure
-    })
+    const user = await actionHandler.getUserFromTelegramID(telegramID)
 
-    if (
-        (await actionHandler.isUserWithout2FA(telegramID)) &&
-        parsedMessage.command !== '/requestNew2FACode'
-    ) {
-        parsedMessage.command = '/enable2fa'
+    let parsedMessage = parseParams(messageContent)
+    if (!parsedMessage) return doConversation(webhookData, user)
+
+    if (user) {
+        if (await actionHandler.isUserWithout2FA(user.id) && parsedMessage.command !== '/requestNew2FACode')
+            parsedMessage.command = '/enable2fa'
+    } else {
+        if (parsedMessage.command !== '/start' &&
+            parsedMessage.command !== '/signup' &&
+            parsedMessage.command !== '/requestNew2FACode') {
+                parsedMessage.command = '/start'
+        }
     }
 
     let content, keyboard
 
     // start
     if (parsedMessage.command === '/start') {
-        try {
-            await new Firestore().fetchTelegramUser(telegramID)
-            content = 'Hey there, good to see you again. What would you like to do?'
+        if (user) {
+            content = responder.response('success', 'start', 'welcomeBack')
             keyboard = 'p1'
-        } catch (_) {
-            content = 'Hi there! Please click Register to begin.'
-            keyboard = [{ text: 'Register', callback_data: '/signup' }]
+        } else {
+            content = responder.response('success', 'start', 'welcome')
+            keyboard = keyboards.register
         }
+    }
+    // signup
+    else if (parsedMessage.command === '/signup') {
+        await new ConvoHandler(telegramID)
+            .createNewCommandPartial(parsedMessage.command)
+            .then(async () => {
+                let data = new SignupConvo().initialMessage()
+                content = data
+                if (data.keyboard) {
+                    keyboard = data.keyboard
+                    content = data.message
+                }
+            })
+            .catch(async failure => {
+                content = failure
+                keyboard = keyboards.register
+            })
     }
     // help
     else if (parsedMessage.command === '/help') {
-        content = 'What would you like to do?'
+        content = responder.response('request', 'help')
         keyboard = 'p1'
     }
     // receive
     else if (parsedMessage.command === '/receive') {
         let type = parsedMessage.params[0] ? parsedMessage.params[0] : null
         if (!type) {
-            content = `Would you like to see your Litecoin wallet address, a QR code, or your registered email address?`
-            keyboard = [
-                [
-                    { text: 'Wallet', callback_data: '/receive wallet' },
-                    { text: 'QR', callback_data: '/receive qr' },
-                    { text: 'Email', callback_data: '/receive email' }
-                ],
-                [{ text: 'Cancel', callback_data: '/help' }]
-            ]
+            content = responder.response('request', 'receive')
+            keyboard = keyboards.receive
         } else {
             await actionHandler
-                .receive(telegramID)
+                .receive(user)
                 .then(async addresses => {
                     let { wallet, email } = addresses
                     if (type === 'wallet') {
@@ -121,7 +156,7 @@ const parseCommand = async webhookData => {
                 })
                 .catch(async failure => {
                     console.log(failure)
-                    content = `I had a problem looking up your receiving addresses. Please try again, sorry about that. 😔`
+                    content = failure
                     keyboard = 'p1'
                 })
 
@@ -133,7 +168,7 @@ const parseCommand = async webhookData => {
         await new ConvoHandler(telegramID)
             .createNewCommandPartial(parsedMessage.command)
             .then(async () => {
-                let data = await new SendConvo().initialMessage(telegramID)
+                let data = await new SendConvo().initialMessage(user.id)
                 content = data
                 if (data.keyboard) {
                     keyboard = data.keyboard
@@ -141,68 +176,25 @@ const parseCommand = async webhookData => {
                 }
             })
             .catch(async failure => {
-                console.log(failure)
-                content = 'An error occurred, please try again.'
+                content = failure
                 keyboard = 'p1'
-            })
-    }
-    // signup
-    else if (parsedMessage.command === '/signup') {
-        await new ConvoHandler(telegramID)
-            .createNewCommandPartial(parsedMessage.command)
-            .then(async () => {
-                let data = new SignupConvo().initialMessage()
-                content = data
-                if (data.keyboard) {
-                    keyboard = data.keyboard
-                    content = data.message
-                }
-            })
-            .catch(async failure => {
-                console.log(failure)
-                content = 'An error occurred, please try again.'
-                keyboard = [[{ text: 'Signup', callback_data: '/signup' }]]
             })
     }
     // balance
     else if (parsedMessage.command === '/balance') {
         await actionHandler
-            .balance(telegramID)
+            .balance(user.id)
             .then(async balance => {
+                //TODO: extract this to an actionHandler method
                 try {
                     let rate = await require('../utils/getPrice')()
-                    if (balance.unconfirmedBalance) {
-                        content = `Your balance is ${
-                            balance.balance
-                        } LTC, and your unconfirmed balance is ${
-                            balance.unconfirmedBalance
-                        } LTC.`
-
-                        if (rate) {
-                            let balanceUSD = (
-                                Number(balance.balance) * rate
-                            ).toFixed(2)
-                            let unconfirmedUSD = (
-                                Number(balance.unconfirmedBalance) * rate
-                            ).toFixed(2)
-
-                            content = `Your balance is ${
-                                balance.balance
-                            } LTC or $${balanceUSD}, and your unconfirmed balance is ${
-                                balance.unconfirmedBalance
-                            } LTC or $${unconfirmedUSD}.`
-                        }
+                    if (rate) {
+                        let balanceUSD = (
+                            Number(balance) * rate
+                        ).toFixed(2)
+                        content = content = responder.response('success', 'balance', 'withoutUnconfirmedUSD', { balance, balanceUSD })
                     } else {
-                        content = `Your balance is ${balance.balance} LTC.`
-
-                        if (rate) {
-                            let balanceUSD = (
-                                Number(balance.balance) * rate
-                            ).toFixed(2)
-                            content = `Your balance is ${
-                                balance.balance
-                            } LTC or $${balanceUSD}.`
-                        }
+                        content = responder.response('success', 'balance', 'withoutUnconfirmed', { balance })
                     }
                     keyboard = 'p1'
                 } catch (err) {
@@ -219,7 +211,7 @@ const parseCommand = async webhookData => {
         await new ConvoHandler(telegramID)
             .createNewCommandPartial(parsedMessage.command)
             .then(async () => {
-                let data = await new ChangePasswordConvo().initialMessage(telegramID)
+                let data = await new ChangePasswordConvo().initialMessage(user.id)
                 content = data
                 if (data.keyboard) {
                     keyboard = data.keyboard
@@ -227,8 +219,7 @@ const parseCommand = async webhookData => {
                 }
             })
             .catch(async failure => {
-                console.log(failure)
-                content = 'An error occurred, please try again.'
+                content = failure
                 keyboard = 'p1'
             })
     }
@@ -245,8 +236,7 @@ const parseCommand = async webhookData => {
                 }
             })
             .catch(async failure => {
-                console.log(failure)
-                content = 'An error occurred, please try again.'
+                content = failure
                 keyboard = 'p1'
             })
     }
@@ -263,8 +253,7 @@ const parseCommand = async webhookData => {
                 }
             })
             .catch(async failure => {
-                console.log(failure)
-                content = 'An error occurred, please try again.'
+                content = failure
                 keyboard = 'p1'
             })
     }
@@ -273,33 +262,23 @@ const parseCommand = async webhookData => {
         await actionHandler
             .clearCoversationCommand(telegramID)
             .then(async () => {
-                content = 'Commands have been cleared.'
+                content = responder.response('success', 'clear')
                 keyboard = 'p1'
             })
             .catch(async failure => {
-                content =
-                    'There was a problem clearing your commands. Please try again.'
+                content = failure
                 keyboard = 'p1'
             })
     }
     // transactions
     else if (parsedMessage.command === '/transactions') {
-        let startTime = !isNaN(parsedMessage.params[0])
-            ? parsedMessage.params[0]
-            : null
+        let more = parsedMessage.params[0] === 'more'
         await actionHandler
-            .getTransactions(telegramID, startTime)
+            .getTransactions(user.id, more)
             .then(async data => {
-                let { transactions, nextTime } = data
-                if (startTime) {
-                    content = `Here's a look at your next ${
-                        transactions.length
-                    } most recent transactions:`
-                } else {
-                    content = `Here's a look at your ${
-                        transactions.length
-                    } most recent transactions:`
-                }
+                let { transactions, more } = data
+                let moreThanOne = transactions.length > 1 ? transactions.length : ''
+                content = responder.response('success', 'transactions', null, { moreThanOne })
 
                 let subdomain =
                     process.env.STAGE === 'production' ||
@@ -319,47 +298,38 @@ const parseCommand = async webhookData => {
 
                 keyboard = [buttonLayout]
 
-                if (nextTime) {
+                if (more) {
                     keyboard.push([
                         {
                             text: 'More...',
-                            callback_data: `/transactions ${nextTime}`
+                            callback_data: `/transactions more`
                         },
-                        { text: 'Back', callback_data: '/help' }
+                        buttons.back
                     ])
                 } else {
-                    keyboard.push([{ text: 'Back', callback_data: '/help' }])
+                    keyboard.push([buttons.back])
                 }
             })
             .catch(async failure => {
-                if (failure === 'No transactions found') {
-                    content = `Hmm I didn't seem to find any transactions for you.`
-                    keyboard = 'p1'
-                } else {
-                    content =
-                        'There was a problem fetching your transactions. Please try again.'
-                    keyboard = 'p1'
-                }
+                content = failure
+                keyboard = 'p1'
             })
     }
-    // enable2fa (only invoked by inline keyboard option)
+    // enable2fa (only invoked by 2fa requirement check)
     else if (parsedMessage.command === '/enable2fa') {
         await new ConvoHandler(telegramID)
             .createNewCommandPartial(parsedMessage.command)
             .then(async () => {
-                content = new Enable2FAConvo().initialMessage()
+                let data = new Enable2FAConvo().initialMessage()
+                content = data
+                if (data.keyboard) {
+                    keyboard = data.keyboard
+                    content = data.message
+                }
             })
             .catch(async failure => {
-                console.log(failure)
-                content = 'An error occurred, please try again.'
-                keyboard = [
-                    [
-                        {
-                            text: 'Enable Two Factor Auth',
-                            callback_data: '/enable2fa'
-                        }
-                    ]
-                ]
+                content = failure
+                keyboard = keyboards.enable2fa
             })
     }
     // request new two factor authentication code to be sent
@@ -376,9 +346,10 @@ const parseCommand = async webhookData => {
                     if (inputType === 'message') webhookData.message.text = stepValue
                     else webhookData.callback_query.data = stepValue
 
-                    return doConversation(webhookData)
+                    return doConversation(webhookData, user)
                 } else {
                     let command = convoPartial.data().command
+
                     if (inputType === 'message') webhookData.message.text = command
                     else webhookData.callback_query.data = command
 
@@ -386,15 +357,15 @@ const parseCommand = async webhookData => {
                 }
             })
     } else if (parsedMessage.command === '/moreInlineCommands') {
-        content = 'Here are some more commands you I can perform for you.'
+        content = responder.response('success', 'more')
         keyboard = 'p2'
     } else if (parsedMessage.command === '/mainInlineCommands') {
-        content = 'What would you like to do?'
+        content = responder.response('success', 'main')
         keyboard = 'p1'
     }
     // Go process partial command
     else {
-        return doConversation(webhookData)
+        return doConversation(webhookData, user)
     }
 
     //ensure there is always an inline keyboard
@@ -403,9 +374,9 @@ const parseCommand = async webhookData => {
             parsedMessage.command === '/signup' ||
             parsedMessage.command === '/start'
         ) {
-            keyboard = [[{ text: 'Cancel', callback_data: '/start' }]]
+            keyboard = keyboards.start
         } else {
-            keyboard = [[{ text: 'Cancel', callback_data: '/help' }]]
+            keyboard = keyboards.cancel
         }
     }
 
@@ -432,7 +403,7 @@ const parseCommand = async webhookData => {
     return true
 }
 
-const doConversation = async webhookData => {
+const doConversation = async (webhookData, user) => {
     let inputType, message, messageContent, chatID, messageID, callbackID
     if (webhookData.message) {
         inputType = 'message'
@@ -469,19 +440,19 @@ const doConversation = async webhookData => {
                     convo = new SignupConvo(convoPartial)
                     break
                 case '/send':
-                    convo = new SendConvo(convoPartial, telegramUsername)
+                    convo = new SendConvo(convoPartial, user, telegramUsername)
                     break
                 case '/changePassword':
-                    convo = new ChangePasswordConvo(convoPartial)
+                    convo = new ChangePasswordConvo(convoPartial, user)
                     break
                 case '/changeEmail':
-                    convo = new ChangeEmailConvo(convoPartial)
+                    convo = new ChangeEmailConvo(convoPartial, user)
                     break
                 case '/export':
-                    convo = new ExportConvo(convoPartial)
+                    convo = new ExportConvo(convoPartial, user)
                     break
                 case '/enable2fa':
-                    convo = new Enable2FAConvo(convoPartial)
+                    convo = new Enable2FAConvo(convoPartial, user)
                     break
                 default:
                     return unknownMessage(messenger)
@@ -494,20 +465,14 @@ const doConversation = async webhookData => {
                         content = data.message
                         keyboard = data.keyboard ? data.keyboard : []
                     } else {
-                        keyboard = [
-                            {
-                                text: 'Cancel',
-                                callback_data: '/clear'
-                            }
-                        ]
+                        keyboard = keyboards.clear
                     }
 
-                    if (data.alert) messenger.answerCallback(data.alert, true)
+                    if (data.alert) await messenger.answerCallback(data.alert, true)
                 })
                 .catch(async failure => {
-                    //TODO: check for start command here
                     content = failure
-                    keyboard = [[{ text: 'Cancel', callback_data: '/help' }]]
+                    keyboard = keyboards.cancel
                     if (failure.message) {
                         content = failure.message
                         keyboard = failure.keyboard
@@ -520,9 +485,9 @@ const doConversation = async webhookData => {
                     convoPartial.data().command === '/signup' ||
                     convoPartial.data().command === '/start'
                 ) {
-                    keyboard = [[{ text: 'Cancel', callback_data: '/start' }]]
+                    keyboard = keyboards.start
                 } else {
-                    keyboard = [[{ text: 'Cancel', callback_data: '/help' }]]
+                    keyboard = keyboards.cancel
                 }
             }
 
@@ -574,13 +539,8 @@ const doConversation = async webhookData => {
 
 const unknownMessage = async messenger => {
     await messenger.editMessage(
-        "Sorry I didn't quite get that. Please cancel and try again.",
-        messenger.inlineKeyboard([
-            {
-                text: 'Cancel',
-                callback_data: '/help'
-            }
-        ])
+        responder.response('failure', 'unknownInput'),
+        messenger.inlineKeyboard(keyboards.cancel)
     )
     return true
 }
@@ -608,40 +568,6 @@ function parseParams(str) {
     let command = params.shift()
     if (!/^\/\S+/.test(command)) return
     return { command, params }
-}
-
-// return an object { command: (String), params: (Object) }
-function convertParsedParams(parsedParams, format) {
-    if (!parsedParams) return
-    let formattedParams = parseParams(format)
-    if (
-        !formattedParams ||
-        formattedParams.command !== parsedParams.command ||
-        formattedParams.params.length > parsedParams.params.length
-    )
-        return
-    let paramHash = {}
-    formattedParams.params.forEach((param, index) => {
-        paramHash[param] = parsedParams.params[index]
-    })
-    formattedParams.params = paramHash
-    return formattedParams
-}
-
-// Holds the format of the command expected from telegram users
-const commandFormats = {
-    signup: '/signup email password',
-    balance: '/balance',
-    receive: '/receive',
-    send: '/send to amount password',
-    changePassword: '/changePassword oldPassword newPassword',
-    sync: '/sync',
-    changeEmail: '/changeEmail newEmail password',
-    export: '/export type password',
-    transactions: '/transactions',
-    import: '/import privateKey password', //TODO: implement this command; need to test multi wallet workflow
-    help: '/help',
-    clear: '/clear'
 }
 
 module.exports = parseCommand

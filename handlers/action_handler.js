@@ -1,6 +1,7 @@
 const LtcApi = require('../utils/ltc_api')
+const Responder = require('../utils/responder')
 const Firestore = require('./firestore_handler')
-const Plivo = require('./plivo_handler')
+const Twilio = require('./twilio_handler')
 const uuid = require('uuid')
 
 const ltcApi = token => {
@@ -10,13 +11,36 @@ const ltcApi = token => {
 class ActionHandler {
     constructor() {
         this.firestore = new Firestore()
+        this.responder = new Responder()
     }
 
     // Commands
 
-    async send(to, amount, password, telegramID) {
+    async signup(telegramID, email, password) {
+        if (await this.alreadySignedUp(email, telegramID))
+            throw this.responder.response('failure', 'alreadyRegistered')
         try {
-            let { token } = await this.getTelegramUserAndToken(telegramID, password)
+            let user = await this.firestore.signUp(email, password)
+            const userID = user.uid
+            await this.firestore.addTelegramUser(userID, telegramID, email)
+            let token = await this.firestore.getToken(email, password)
+            let ltc = ltcApi(token)
+            let { data } = await ltc.createWallet(password)
+            if (data.success) {
+                await this.firestore.createPublicUserData(userID, email)
+                return data.data.wallet.address
+            }
+            else throw this.responder.response('failure', 'signup', 'backend')
+        } catch (err) {
+            console.log(err)
+            //TODO: Rollback all created objects
+            throw err
+        }
+    }
+
+    async send(to, amount, password, user) {
+        try {
+            let token = await this.getToken(user.email, password)
             let toWallet, toEmail, toUser
             if (this.isEmail(to)) {
                 let fetchToWallet = await this.firestore.fetchWalletByEmail(to)
@@ -39,17 +63,16 @@ class ActionHandler {
                     toUser = fetchToUserTelegramId.telegramID
                 } catch (e) {} //ignore exception, recipient is simply not a registered user
             } else
-                throw 'You can only send to email addresses and litecoin addresses. Please try again.'
+                throw this.responder.response('failure', 'send', 'invalidAddress')
 
-            let ltc = new LtcApi(token)
-
-            let fetchFromWallet = await this.firestore.fetchWalletByTelegramID(
-                telegramID
+            let ltc = ltcApi(token)
+            let fetchFromWallet = await this.firestore.fetchWalletByUserId(
+                user.id
             )
             let from = fetchFromWallet.data().address
             let interfaceMockId = uuid.v4()
 
-            let { data } = await ltc.transferLtc(
+            let response = await ltc.transferLtc(
                 toWallet,
                 amount,
                 password,
@@ -57,187 +80,135 @@ class ActionHandler {
                 interfaceMockId,
                 toEmail
             )
-            let { success, transaction } = data
-            if (success) return { txid: transaction, toUser }
-            else throw 'Error sending.'
+            let { success, data, error } = response.data
+            if (success) return { txid: data.transaction, toUser }
+            else {
+                if (error && (error === 'NO_UTXO' || error === 'INPUT_OUTPUT'))
+                    throw this.responder.response('failure', 'send', 'noUTXOs')
+                else throw this.responder.response('failure', 'send', 'transaction')
+            }
         } catch (err) {
-            console.log(`Send threw: ${err}`)
-            if (err === 'A token could not be issued with these credentials.')
-                throw 'Invalid password, please try again with the correct password or click Cancel.'
-            throw 'Something went wrong, please try again.'
+            throw err
         }
     }
 
-    async signup(telegramID, email, password) {
-        if (await this.alreadySignedUp(email, telegramID))
-            throw "You already exist, you don't need to sign up."
+    async balance(userID) {
         try {
-            let user = await this.firestore.signUp(email, password)
-            const userID = user.uid
-            await this.firestore.addTelegramUser(userID, telegramID, email)
-            let token = await this.firestore.getToken(email, password)
-
-            let { data } = await ltcApi(token).createWallet(password)
-            let { success, wallet } = data
-            if (success) return wallet.address
-            else throw 'Failed to create wallet.'
+            let walletData = await this.firestore.fetchWalletByUserId(userID)
+            let balance = walletData.data().currencies.ltc
+            return balance
         } catch (err) {
-            //TODO: Rollback all created objects
-            console.log(`Signup threw: ${err}`)
-            if (err === 'A token could not be issued with these credentials.')
-                throw 'Invalid password, please try again with the correct password or click Cancel.'
-            throw 'There was an error signing up, please try again.'
+            console.log(err)
+            throw err
         }
     }
 
-    async balance(telegramID) {
+    async changePassword(user, currentPassword, newPassword) {
         try {
-            let fetchWallet = await this.firestore.fetchWalletByTelegramID(
-                telegramID
-            )
-            let wallet = fetchWallet.data()
-
-            let { data } = await ltcApi().getBalance(wallet.address)
-
-            let { balance, unconfirmedBalance, success } = data
-            if (success) return { balance, unconfirmedBalance }
-            else throw 'Error getting balance.'
-        } catch (err) {
-            console.log(`Balance threw: ${err}`)
-            throw 'Sorry please try again.'
-        }
-    }
-
-    async changePassword(telegramID, currentPassword, newPassword) {
-        try {
-            let getTelegramUser = await this.firestore.fetchTelegramUser(telegramID)
-            let userId = getTelegramUser.id
-
-            let { token } = await this.getTelegramUserAndToken(
-                telegramID,
-                currentPassword
-            )
-
+            let token = await this.getToken(user.email, currentPassword)
             let { data } = await ltcApi(token).changePassword(
                 currentPassword,
                 newPassword
             )
             let { success } = data
             if (success) {
-                let updatePassword = await this.firestore.auth().updateUser(userId, {
+                await this.firestore.auth().updateUser(user.id, {
                     password: newPassword
                 })
                 return true
-            } else throw 'Error changing password.'
+            } else throw this.responder.response('failure', 'changePassword', 'backend')
         } catch (err) {
-            console.log(`changePassword threw: ${err}`)
-            if (err === 'A token could not be issued with these credentials.')
-                throw 'Invalid password, please try again with the correct password or click Cancel.'
-            throw 'Sorry please try again.'
+            throw err
         }
     }
 
-    async changeEmail(telegramID, email, password) {
+    async changeEmail(user, email, password) {
         try {
-            let getTelegramUser = await this.firestore.fetchTelegramUser(telegramID)
-            let userId = getTelegramUser.id
-
-            let { token } = await this.getTelegramUserAndToken(telegramID, password)
-
-            let ltc = new LtcApi(token)
-
+            let token = await this.getToken(user.email, password)
+            let ltc = ltcApi(token)
             let { data } = await ltc.changeEmail(email, password)
             let { success } = data
             if (success) {
-                let updateEmailInFirebase = await this.firestore
+                await this.firestore
                     .collection('telegramUsers')
-                    .doc(userId)
+                    .doc(user.id)
                     .set({ email }, { merge: true })
 
-                let updateEmail = await this.firestore.auth().updateUser(userId, {
+                await this.firestore.auth().updateUser(user.id, {
                     email
                 })
                 return true
-            } else throw 'Error changing email address.'
+            } else throw this.responder.response('failure', 'changeEmail', 'backend')
         } catch (err) {
-            console.log(`changeEmail threw: ${err}`)
-            if (err === 'A token could not be issued with these credentials.')
-                throw 'Invalid password, please try again with the correct password or click Cancel.'
-            throw 'Sorry please try again.'
+            throw err
         }
     }
 
-    async export(telegramID, type, password) {
+    async export(user, type, password) {
         try {
-            let { token } = await this.getTelegramUserAndToken(telegramID, password)
-            let ltc = new LtcApi(token)
-
-            let fetchWallet = await this.firestore.fetchWalletByTelegramID(
-                telegramID
+            let token = await this.getToken(user.email, password)
+            let ltc = ltcApi(token)
+            let fetchWallet = await this.firestore.fetchWalletByUserId(
+                user.id
             )
             let wallet = fetchWallet.data().address
+            let fetchKey = await ltc.exportPrivateKey(password, wallet)
 
+            let { success, data } = fetchKey.data
+            if (!success)
+                throw this.responder.response('failure', 'export', 'backend', { type })
             if (type === 'key') {
-                let fetchKey = await ltc.exportPrivateKey(password, wallet)
-                if (!fetchKey.data.success)
-                    throw 'Sorry, I had an issue fetching your private key. Please try again.'
-                return fetchKey.data.privateKey
+                return data.privateKey
             } else {
-                let fetchKey = await ltc.exportMnemonic(password)
-                if (!fetchKey.data.success)
-                    throw 'Sorry, I had an issue fetching your seed phrase. Please try again.'
-                return fetchKey.data.phrase
+                return data.phrase
             }
         } catch (err) {
-            console.log(`Export threw: ${err}`)
-            if (err === 'A token could not be issued with these credentials.')
-                throw 'Invalid password, please try again with the correct password or click Cancel.'
-            throw 'Something went wrong, please try again.'
+            throw err
         }
     }
 
-    async receive(telegramID) {
-        let walletData = await this.firestore.fetchWalletByTelegramID(telegramID)
-        let wallet = walletData.data().address
-
-        let user = await this.firestore.fetchTelegramUser(telegramID)
-        let email = user.data().email
-
-        return { wallet, email }
-    }
-
-    async sync(telegramID) {
+    async receive(user) {
         try {
-            let getTelegramUser = await this.firestore.fetchTelegramUser(telegramID)
-            let userId = getTelegramUser.id
-            await ltcApi().syncTransactions(userId)
+            let walletData = await this.firestore.fetchWalletByUserId(user.id)
+            let wallet = walletData.data().address
+            let email = user.email
+
+            return { wallet, email }
         } catch (err) {
-            console.log(`sync threw: ${err}`)
-            throw 'Something went wrong, please try again.'
+            throw err
         }
     }
 
-    async getTransactions(telegramID, startTime = null, startID = null) {
+    async getTransactions(userID, getMore = false) {
         try {
-            let getTelegramUser = await this.firestore.fetchTelegramUser(telegramID)
-            let userID = getTelegramUser.id
+            let walletData = await this.firestore.fetchWalletByUserId(userID)
+            let address = walletData.data().address
+
+            let startTime, startID
+            if (getMore) {
+                let values = await this.firestore.fetchNextTransactionID(userID)
+                startTime = values.nextTime
+                startID = values.nextID
+            }
+
             let transactions = await this.firestore.fetchTransactions(
-                userID,
+                address,
                 startTime,
                 startID
             )
 
-            let nextTime
-            if (Object.keys(transactions).length === 4) {
-                nextTime = transactions[3].time
+            let more = false
+            if (transactions.length > 3) {
+                more = true
+                let nextTime = transactions[3].time
                 let nextID = transactions[3].txid
-                await this.firestore.setNextTransactionID(userID, nextID)
-                transactions.splice(-1, 1)
+                await this.firestore.setNextTransactionID(userID, nextTime, nextID)
+            } else {
+                await this.firestore.unsetNextTransactionID(userID)
             }
+            return { transactions: transactions.slice(0, 3), more }
 
-            return { transactions, nextTime }
         } catch (err) {
-            console.log(`GetTransactions threw: ${err}`)
             throw err
         }
     }
@@ -249,62 +220,100 @@ class ActionHandler {
             let code = this.generate2FACode()
             await this.firestore.enable2FA(telegramID, phone, code)
 
-            let plivo = new Plivo()
-            return await plivo.send(
-                phone,
-                `Thank you for using Lite.IM. Your code is: ${code}`
-            )
+            try {
+                let twilio = new Twilio()
+                return await twilio.send(
+                    phone,
+                    `Thank you for using Lite.IM. Your code is: ${code}`
+                )
+            } catch (err) {
+                console.log(err)
+                throw this.responder.response('failure', 'generic')
+            }
         } catch (err) {
-            console.log(`enable2FA threw: ${err}`)
-            if (err.includes === 'Insufficient credits') throw 'Insufficient credits'
-            throw 'Sorry, I had an issue with your request. Please try again.'
+            throw err
         }
     }
 
-    async request2FA(telegramID) {
+    async request2FA(userID) {
         try {
             let code = this.generate2FACode()
-            let phone = await this.firestore.request2FA(telegramID, code)
-            let plivo = new Plivo()
-            return await plivo.send(
-                phone,
-                `Here is your Lite.IM security code: ${code}`
-            )
+            let phone = await this.firestore.request2FA(userID, code)
+            try {
+                let twilio = new Twilio()
+                return await twilio.send(
+                    phone,
+                    `Here is your Lite.IM security code: ${code}`
+                )
+            } catch (err) {
+                console.log(err)
+                throw this.responder.response('failure', 'generic')
+            }
         } catch (err) {
-            console.log(`request2FA threw: ${err}`)
-            throw 'Sorry, I had an issue with your request. Please try again.'
+            throw err
         }
     }
 
-    async check2FA(telegramID, code, signup = false) {
+    async check2FA(telegramID, code, userID = null) {
         try {
-            let firebaseID
-
-            if (!signup) {
-                try {
-                    let getTelegramUser = await this.firestore.fetchTelegramUser(
-                        telegramID
-                    )
-                    firebaseID = getTelegramUser.id
-                } catch (_) {} //ignore exception, this just means the user is signing up
-            }
-
-            return await this.firestore.check2FA(telegramID, code, firebaseID)
+            return await this.firestore.check2FA(telegramID, code, userID)
         } catch (err) {
-            console.log(`check2FA threw: ${err}`)
-            throw 'Sorry, I had an issue with your request. Please try again.'
+            console.log(err)
+            throw err
         }
     }
 
     // Helpers
 
+    async checkPassword(email, password) {
+        try {
+            await this.firestore.getToken(email, password)
+        } catch (err) {
+            console.log(err)
+            throw this.responder.response('failure', 'password')
+        }
+    }
+
     async getTelegramUserAndToken(telegramID, password) {
-        let telegramUser = await this.firestore.fetchTelegramUser(telegramID)
-        let token = await this.firestore.getToken(
-            telegramUser.data().email,
-            password
-        )
-        return { user: telegramUser, token }
+        try {
+            let telegramUser = await this.firestore.fetchTelegramUser(telegramID)
+            let token = await this.firestore.getToken(
+                telegramUser.data().email,
+                password
+            )
+            return { user: telegramUser, token }
+        } catch (err) {
+            throw err
+        }
+    }
+
+    async getToken(email, password) {
+        try {
+           return this.firestore.getToken(
+                email,
+                password
+            )
+        } catch (err) {
+            throw err
+        }
+
+    }
+
+    async getUserFromTelegramID(telegramID) {
+        try {
+            let fetchTelegramUser = await this.firestore.fetchTelegramUser(
+                telegramID
+            )
+            if (!fetchTelegramUser || !fetchTelegramUser.exists) return false
+            let user = fetchTelegramUser.data()
+            if (!user) return false
+
+            user.id = fetchTelegramUser.id
+            return user
+
+        } catch (e) {
+            return false
+        }
     }
 
     async alreadySignedUp(email, telegramID) {
@@ -323,16 +332,8 @@ class ActionHandler {
         return false
     }
 
-    async isUserWithout2FA(telegramID) {
+    async isUserWithout2FA(userID) {
         try {
-            let fetchTelegramUser = await this.firestore.fetchTelegramUser(
-                telegramID
-            )
-            if (!fetchTelegramUser || !fetchTelegramUser.exists) return false
-            let userID = fetchTelegramUser.id
-
-            if (!userID) return false //is not a user, therefore does not need 2FA yet
-
             let fetchTwoFactorData = await this.firestore.fetchTwoFactorData(userID)
             let activationStatus = fetchTwoFactorData.activated
 
