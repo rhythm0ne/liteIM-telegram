@@ -188,6 +188,22 @@ class FirestoreHandler {
         }
     }
 
+    async fetchTelegramUserByAddress(address) {
+        try {
+            let walletDoc = await this.collection('wallets')
+                .doc(address)
+                .get()
+            let wallet = walletDoc.exists ? walletDoc.data() : null
+            if (!wallet) throw 'User not found by firebaseID.'
+
+            let userID = wallet.belongsTo
+            return this.fetchTelegramUserByFirebaseID(userID)
+        } catch (err) {
+            console.log(err)
+            throw this.responder.response('failure', 'generic')
+        }
+    }
+
     async fetchTwoFactorData(firebaseID) {
         try {
             let doc = await this.collection('two_factor')

@@ -221,6 +221,11 @@ class ActionHandler {
             await this.firestore.enable2FA(telegramID, phone, code)
 
             try {
+                phone = phone.toString()
+                if (phone.charAt(0) !== '+') {
+                    phone = `+${phone}`
+                }
+
                 let twilio = new Twilio()
                 return await twilio.send(
                     phone,
@@ -239,6 +244,12 @@ class ActionHandler {
         try {
             let code = this.generate2FACode()
             let phone = await this.firestore.request2FA(userID, code)
+
+            phone = phone.toString()
+            if (phone.charAt(0) !== '+') {
+                phone = `+${phone}`
+            }
+
             try {
                 let twilio = new Twilio()
                 return await twilio.send(
