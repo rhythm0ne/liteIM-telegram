@@ -52,11 +52,11 @@ You can also reach the dev team directly on [github](https://github.com/zulurepu
 
 ## 8. Learn More
 
-To learn more about Lite.IM, visit the [project website](https://www.lite.im/), as well as the [Zulu Republic website](https://www.zulurepublic.io/) and [blog](www.medium.com/zulurepublic).
+To learn more about Lite.IM, visit the [project website](https://www.lite.im/), as well as the [Zulu Republic website](https://www.zulurepublic.io/) and [blog](https://www.medium.com/zulurepublic).
 
 The Lite.IM Telegram bot can be found at [@LiteIM_bot](http://telegram.me/LiteIM_bot), while the Zulu Republic Telegram community can be found [here](https://t.me/ztxrepublic).
 
-Follow Zulu Republic on Twitter at [@ztxrepublic](www.twitter.com/ztxrepublic).
+Follow Zulu Republic on Twitter at [@ztxrepublic](https://www.twitter.com/ztxrepublic).
 
 ## 9. What's New In This Version
 
