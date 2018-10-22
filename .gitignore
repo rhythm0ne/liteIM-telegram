@@ -1,6 +1,7 @@
-instances
+src/instances
 node_modules
 jspm_packages
 serverless.yml
 .serverless
 .idea
+.env

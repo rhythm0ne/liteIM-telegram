@@ -1,6 +1,6 @@
 {
   "name": "liteIM-telegram",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "main": "utils/serverless_handler.js",
   "repository": {
     "type": "git",
@@ -23,14 +23,19 @@
   },
   "homepage": "https://github.com/zulurepublic/liteIM-telegram#readme",
   "dependencies": {
+    "body-parser": "^1.18.3",
+    "dotenv": "^6.0.0",
+    "express": "^4.16.3",
     "firebase-admin": "^6.0.0",
+    "helmet": "^3.13.0",
     "libphonenumber-js": "^1.4.3",
     "litecore-lib": "^0.13.22",
     "request": "^2.87.0",
     "request-promise-native": "^1.0.5",
     "telegraf": "^3.21.0",
+    "twilio": "^3.19.1",
     "uuid": "^3.3.2",
-    "twilio": "^3.19.1"
+    "zalo-sdk": "^2.0.4"
   },
   "description": ""
 }
