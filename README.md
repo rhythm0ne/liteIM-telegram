@@ -10,7 +10,7 @@ Lite.IM is a project from the [Zulu Republic](https://www.zulurepublic.io/) team
 
 **Architecture**
 
-Lite.IM is lightweight, yet robust. Lite.IM is built to be scalable, highly available, and most importantly, secure. We are using industry leading services to assure the highest level of quality and peace of mind. You don't have to worry about our servers going down, because we don't have any!
+Lite.IM is lightweight, yet robust, built to be lean, scalable, highly available, and most importantly, secure. We are using industry leading services to assure the highest level of quality and peace of mind. 
 
 **Private Keys**
 
