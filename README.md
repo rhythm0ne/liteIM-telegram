@@ -59,6 +59,6 @@ Follow Zulu Republic on Twitter at [@ztxrepublic](www.twitter.com/ztxrepublic).
 ## 9. What's New In This Version
 
 - Switch from Lambda implementation to Express app
-- Added support for Twilio SMS in US and Switzerlands
+- Added support for Twilio SMS in US
 - Added support for Facebook Messenger
 - Added menu-based support for platforms where it might be difficult to type commands such as SMS
