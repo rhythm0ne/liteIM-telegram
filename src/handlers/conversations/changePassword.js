@@ -1,27 +1,17 @@
 const Firestore = require('../firestore_handler')
 const ActionHandler = require('../action_handler')
-const Responder = require('../../utils/responder')
+const Responder = require('../responder')
 
 const steps = ['code']
 
-const buttons = {
-    cancel: { text: 'Cancel', callback_data: '/clear' }
-}
-
-const keyboards = {
-    cancel: [buttons.cancel],
-    code: [
-        { text: 'New Code', callback_data: '/changePassword' },
-        buttons.cancel
-    ]
-}
-
 class ChangePasswordConvo {
-    constructor(commandConvo, user) {
+    constructor(commandConvo, user, service, serviceOptions) {
         this.user = user
+        this.service = service
         this.commandConvo = commandConvo
-        this.firestore = new Firestore()
-        this.responder = new Responder()
+        this.firestore = new Firestore(service, serviceOptions)
+        this.responder = new Responder(serviceOptions)
+        this.serviceOptions = serviceOptions
     }
 
     currentStep() {
@@ -33,73 +23,73 @@ class ChangePasswordConvo {
 
     async initialMessage(userID) {
         try {
-            await new ActionHandler().request2FA(userID)
+            await new ActionHandler(this.service, this.serviceOptions).request2FA(userID)
             return {
-                message: this.responder.response('request', 'changePassword', 'code'),
-                keyboard: keyboards.code
+                success: true,
+                message: this.responder.response('request', 'changePassword', 'code')
             }
         } catch (err) {
             return {
-                message: err,
-                keyboard: keyboards.cancel
+                success: false,
+                message: err
             }
         }
     }
 
     async complete(value) {
-        let telegramID = this.commandConvo.id
+        let serviceID = this.commandConvo.id
         try {
             let params = value.split(/\s+/)
             params = params.filter(param => param.length > 0)
             if (params.length < 2)
                 return {
-                    message: this.responder.response('request', 'changePassword', 'password'),
-                    keyboard: keyboards.cancel
+                    success: false,
+                    message: this.responder.response('request', 'changePassword', 'password')
                 }
 
             let currentPassword = params[0]
             let newPassword = params[1]
 
-            await new ActionHandler().changePassword(
+            await new ActionHandler(this.service, this.serviceOptions).changePassword(
                 this.user,
                 currentPassword,
                 newPassword
             )
-            await this.firestore.clearCommandPartial(telegramID)
+            await this.firestore.clearCommandPartial(serviceID)
             return {
-                message: this.responder.response('success', 'changePassword', null, { newPassword }),
-                keyboard: 'p1'
+                success: true,
+                message: this.responder.response('success', 'changePassword', null, {newPassword})
             }
         } catch (err) {
             return {
-                message: err,
-                keyboard: keyboards.cancel
+                success: false,
+                message: err
             }
         }
     }
 
     async afterMessageForStep(step, value) {
-        let telegramID = this.commandConvo.id
+        let serviceID = this.commandConvo.id
         switch (step) {
             case steps[0]:
                 try {
-                    await new ActionHandler().check2FA(telegramID, value, this.user.id)
+                    await new ActionHandler(this.service, this.serviceOptions).check2FA(serviceID, value, this.user.id)
                     return {
-                        message: this.responder.response('request', 'changePassword', 'password'),
-                        keyboard: keyboards.cancel
+                        success: true,
+                        message: this.responder.response('request', 'changePassword', 'password')
                     }
                 } catch (err) {
                     await this.clearStep(step)
                     return {
-                        message: err,
-                        keyboard: keyboards.code
+                        success: false,
+                        message: err
                     }
                 }
 
             default:
                 return {
-                    message: this.responder.response('failure', 'conversation', 'unexpectedInput'),
-                    keyboard: keyboards.cancel
+                    success: false,
+                    message: this.responder.response('failure', 'conversation', 'unexpectedInput')
                 }
         }
     }

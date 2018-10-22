@@ -1,28 +1,18 @@
 const Firestore = require('../firestore_handler')
 const ActionHandler = require('../action_handler')
-const Responder = require('../../utils/responder')
+const Responder = require('../responder')
 const PhoneNumberValidator = require('../../utils/validators/phoneNumber')
 
 const steps = ['number', 'code']
 
-const keyboards = {
-    cancel: [{ text: 'Cancel', callback_data: '/enable2fa' }],
-    code: [
-        { text: 'New Code', callback_data: '/requestNew2FACode newEmail' }
-    ],
-    code2: [
-        { text: 'Change Number', callback_data: '/enable2fa' },
-        { text: 'New Code', callback_data: '/requestNew2FACode number' }
-    ],
-    retry: [[{ text: 'Try Again', callback_data: '/enable2fa' }]]
-}
-
-class SignupConvo {
-    constructor(commandConvo, user) {
+class Enable2FAConvo {
+    constructor(commandConvo, user, service, serviceOptions) {
         this.user = user
+        this.service = service
         this.commandConvo = commandConvo
-        this.firestore = new Firestore()
-        this.responder = new Responder()
+        this.firestore = new Firestore(service, serviceOptions)
+        this.responder = new Responder(serviceOptions)
+        this.serviceOptions = serviceOptions
     }
 
     currentStep() {
@@ -34,68 +24,68 @@ class SignupConvo {
 
     initialMessage() {
         return {
-            message: this.responder.response('request', 'enable2FA', 'number'),
-            keyboard: []
+            success: true,
+            message: this.responder.response('request', 'enable2FA', 'number')
         }
     }
 
     async complete(value) {
-        let telegramID = this.commandConvo.id
+        let serviceID = this.commandConvo.id
 
         try {
-            await new ActionHandler().checkPassword(this.user.email, value)
-            await this.firestore.updateIdOn2FA(telegramID)
-            await this.firestore.clearCommandPartial(telegramID)
+            await new ActionHandler(this.service, this.serviceOptions).checkPassword(this.user.email, value)
+            await this.firestore.updateIdOn2FA(serviceID)
+            await this.firestore.clearCommandPartial(serviceID)
             return {
-                message: this.responder.response('success', 'enable2fa'),
-                keyboard: 'p1'
+                success: true,
+                message: this.responder.response('success', 'enable2fa')
             }
         } catch (err) {
             return {
-                message: err,
-                keyboard: keyboards.retry
+                success: false,
+                message: err
             }
         }
     }
 
     async afterMessageForStep(step, value) {
-        let telegramID = this.commandConvo.id
+        let serviceID = this.commandConvo.id
         switch (step) {
             case steps[0]:
                 try {
                     let number = (value.charAt(0) === '+') ? value.substr(1) : value
                     await this.firestore.checkIfPhoneNumberExists(number)
-                    await new ActionHandler().enable2FA(telegramID, number)
+                    await new ActionHandler(this.service, this.serviceOptions).enable2FA(serviceID, number)
                     return {
-                        message: this.responder.response('request', 'enable2FA', 'code', { number }),
-                        keyboard: keyboards.code2
+                        success: true,
+                        message: this.responder.response('request', 'enable2FA', 'code', { number })
                     }
                 } catch (err) {
                     return {
-                        message: err,
-                        keyboard: keyboards.retry
+                        success: false,
+                        message: err
                     }
                 }
 
             case steps[1]:
                 try {
-                    await new ActionHandler().check2FA(telegramID, value)
+                    await new ActionHandler(this.service, this.serviceOptions).check2FA(serviceID, value)
                     return {
-                        message: this.responder.response('request', 'enable2FA', 'password'),
-                        keyboard: keyboards.cancel
+                        success: true,
+                        message: this.responder.response('request', 'enable2FA', 'password')
                     }
                 } catch (err) {
                     await this.clearStep(step)
                     return {
-                        message: err,
-                        keyboard: keyboards.code2
+                        success: false,
+                        message: err
                     }
                 }
 
             default:
                 return {
-                    message: this.responder.response('failure', 'conversation', 'unexpectedInput'),
-                    keyboard: keyboards.retry
+                    success: false,
+                    message: this.responder.response('failure', 'conversation', 'unexpectedInput')
                 }
         }
     }
@@ -144,4 +134,4 @@ class SignupConvo {
     }
 }
 
-module.exports = SignupConvo
+module.exports = Enable2FAConvo
