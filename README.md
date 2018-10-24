@@ -2,7 +2,9 @@
 
 ## 1. What is Lite.IM?
 
-Lite.IM is a full-featured conversational Litecoin wallet. Users can signup and create their wallet, send and receive Litecoin, and check their balance and transaction history, all with a simple set of commands.
+Lite.IM is a full-featured, conversational cryptocurrency wallet designed for use with SMS and instant messaging. Users can signup and create their wallet, send and receive cryptocurrency, and manage their funds all with a simple set of commands, without ever leaving their favorite instant messaging or SMS app.
+
+Lite.IM currently supports litecoin transactions via Telegram Messager and SMS for U.S. mobile phone numbers, with additional platform and region support in development.
 
 Lite.IM is a project from the [Zulu Republic](https://www.zulurepublic.io/) team. 
 
